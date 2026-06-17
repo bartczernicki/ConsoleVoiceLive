@@ -2,6 +2,7 @@
 
 using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using System.ClientModel;
 
@@ -11,6 +12,10 @@ public sealed class AgentQuestionService
 {
     private const string DefaultInstructions =
         "You are a helpful assistant. Answer clearly and concisely because your response will be read aloud.";
+    private const string WebIqInstructions =
+        "You are a helpful assistant. Use the available WebIQ MCP web tool before answering. " +
+        "Base your answer on the retrieved real-time web information, include concise source references when useful, " +
+        "and answer clearly and briefly because your response will be read aloud.";
     private const string PlaceholderEndpoint = "https://YOUR_AZURE_OPENAI_RESOURCE.openai.azure.com";
     private const string PlaceholderApiKey = "YOUR_AZURE_OPENAI_KEY";
     private const string PlaceholderDeploymentName = "YOUR_DEPLOYMENT_NAME";
@@ -19,21 +24,25 @@ public sealed class AgentQuestionService
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentQuestionService> _logger;
     private readonly IServiceProvider _services;
+    private readonly WebIqMcpToolService _webIqMcpToolService;
 
     public AgentQuestionService(
         IConfiguration configuration,
         ILoggerFactory loggerFactory,
         ILogger<AgentQuestionService> logger,
-        IServiceProvider services)
+        IServiceProvider services,
+        WebIqMcpToolService webIqMcpToolService)
     {
         _configuration = configuration;
         _loggerFactory = loggerFactory;
         _logger = logger;
         _services = services;
+        _webIqMcpToolService = webIqMcpToolService;
     }
 
     public async Task<AgentQuestionResponse> AskAsync(
         string question,
+        bool useWebIq = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(question))
@@ -53,15 +62,23 @@ public sealed class AgentQuestionService
 
         try
         {
+            await using WebIqMcpToolContext? webIqToolContext = useWebIq
+                ? await _webIqMcpToolService.CreateWebToolContextAsync(cancellationToken).ConfigureAwait(false)
+                : null;
+            IList<AITool>? tools = webIqToolContext?.Tools.ToList();
+
             var client = new AzureOpenAIClient(
                 new Uri(settings.Endpoint),
                 new ApiKeyCredential(settings.ApiKey));
             ResponsesClient responsesClient = client.GetResponsesClient();
             AIAgent agent = responsesClient.AsAIAgent(
                 model: settings.ModelDeploymentName,
-                instructions: DefaultInstructions,
+                instructions: useWebIq ? WebIqInstructions : DefaultInstructions,
                 name: "AgentTextToSpeech",
-                description: "Answers concise questions for browser text-to-speech playback.",
+                description: useWebIq
+                    ? "Answers concise questions after using WebIQ MCP grounding."
+                    : "Answers concise questions for browser text-to-speech playback.",
+                tools: tools,
                 loggerFactory: _loggerFactory,
                 services: _services);
 
@@ -72,11 +89,17 @@ public sealed class AgentQuestionService
 
             return string.IsNullOrWhiteSpace(answer)
                 ? AgentQuestionResponse.Failure("The agent returned an empty response.")
-                : AgentQuestionResponse.Success(answer);
+                : AgentQuestionResponse.Success(answer, useWebIq);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return AgentQuestionResponse.Failure("The agent request timed out.");
+        }
+        catch (WebIqMcpException ex) when (useWebIq)
+        {
+            _logger.LogWarning(ex, "WebIQ grounding failed for Agent Text to Speech.");
+            return AgentQuestionResponse.Failure(
+                $"WebIQ grounding failed: {SanitizeErrorMessage(ex.Message, settings)}");
         }
         catch (Exception ex)
         {
@@ -152,15 +175,16 @@ public sealed class AgentQuestionService
 public sealed record AgentQuestionResponse(
     bool Succeeded,
     string? Answer,
+    bool UsedWebIq,
     string? ErrorMessage)
 {
-    public static AgentQuestionResponse Success(string answer)
+    public static AgentQuestionResponse Success(string answer, bool usedWebIq)
     {
-        return new AgentQuestionResponse(true, answer, null);
+        return new AgentQuestionResponse(true, answer, usedWebIq, null);
     }
 
     public static AgentQuestionResponse Failure(string errorMessage)
     {
-        return new AgentQuestionResponse(false, null, errorMessage);
+        return new AgentQuestionResponse(false, null, false, errorMessage);
     }
 }

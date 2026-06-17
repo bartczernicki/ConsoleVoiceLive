@@ -46,6 +46,16 @@ a, .btn-link {
     margin: 0;
 }
 
+.agent-tts-webiq-toggle {
+    margin-top: 1rem;
+}
+
+.agent-tts-grounding {
+    color: #495057;
+    font-size: 0.92rem;
+    margin-bottom: 0.75rem;
+}
+
 .tts-controls {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

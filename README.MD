@@ -74,8 +74,8 @@ Create `ConsoleLiveWeb/secrets.appsettings.json`:
 }
 ```
 
-`WebIQ-MCP` is only needed for WebIQ grounded lookup features. Speech-only pages need only `Speech:Endpoint` and `Speech:Key`.
-`AzureOpenAI` is only needed for the Agent Text to Speech page.
+`WebIQ-MCP` is needed for WebIQ grounded lookup features, including the `Use WebIQ` toggle on Text-To-Speech and Agent Text to Speech. The WebIQ key stays server-side in `secrets.appsettings.json`.
+`AzureOpenAI` is needed for the Agent Text to Speech page.
 
 The Blazor app reads non-secret defaults from `ConsoleLiveWeb/appsettings.json`, including voice, model, instructions, TTS prosody defaults, and avatar defaults.
 
@@ -147,6 +147,7 @@ If WebIQ lookup fails, confirm:
 - `WebIQ-MCP:headers:x-apikey` is set in `ConsoleLiveWeb/secrets.appsettings.json`.
 - The WebIQ key is not the placeholder value.
 - The key is never committed or rendered in the browser.
+- For Agent Text to Speech, turning on `Use WebIQ` requires a working MCP connection; the agent will show an error instead of answering from model memory if WebIQ cannot be reached.
 
 If Agent Text to Speech fails, confirm:
 

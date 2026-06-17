@@ -9,6 +9,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<SpeechSynthesisService>();
+builder.Services.AddScoped<WebIqMcpToolService>();
 builder.Services.AddScoped<AgentQuestionService>();
 builder.Services.AddScoped<VoiceLiveSignalingProxy>();
 builder.Services.AddScoped<VoiceLiveAvatarProxy>();

@@ -18,6 +18,18 @@
               disabled="@IsBusy"
               placeholder="Ask the agent a question."></textarea>
 
+    <div class="agent-tts-webiq-toggle form-check form-switch">
+        <input id="agent-use-webiq"
+               class="form-check-input"
+               type="checkbox"
+               role="switch"
+               @bind="UseWebIq"
+               disabled="@IsBusy" />
+        <label class="form-check-label" for="agent-use-webiq">
+            Use WebIQ
+        </label>
+    </div>
+
     <div class="tts-controls">
         <div class="tts-control tts-control-wide">
             <label class="form-label" for="agent-tts-voice">Voice</label>
@@ -109,6 +121,12 @@
     {
         <section class="agent-tts-answer" aria-live="polite">
             <h2>Agent Response</h2>
+            @if (UsedWebIqForAnswer)
+            {
+                <div class="agent-tts-grounding" role="status">
+                    WebIQ grounding was used for this response.
+                </div>
+            }
             <p>@AgentAnswer</p>
         </section>
     }
@@ -136,10 +154,12 @@
     private int RatePercent { get; set; }
     private int PitchPercent { get; set; }
     private int Volume { get; set; }
+    private bool UseWebIq { get; set; }
 
     private bool IsLoadingVoices { get; set; }
     private bool IsAskingAgent { get; set; }
     private bool IsSynthesizing { get; set; }
+    private bool UsedWebIqForAnswer { get; set; }
     private string? VoiceNotice { get; set; }
     private string? ErrorMessage { get; set; }
     private string? SpeechWarning { get; set; }
@@ -201,6 +221,7 @@
         SpeechWarning = null;
         AgentAnswer = null;
         AudioSource = null;
+        UsedWebIqForAnswer = false;
 
         if (string.IsNullOrWhiteSpace(Question))
         {
@@ -212,7 +233,7 @@
 
         try
         {
-            AgentQuestionResponse agentResponse = await AgentQuestion.AskAsync(Question);
+            AgentQuestionResponse agentResponse = await AgentQuestion.AskAsync(Question, UseWebIq);
 
             if (!agentResponse.Succeeded || string.IsNullOrWhiteSpace(agentResponse.Answer))
             {
@@ -221,6 +242,7 @@
             }
 
             AgentAnswer = agentResponse.Answer;
+            UsedWebIqForAnswer = agentResponse.UsedWebIq;
         }
         finally
         {

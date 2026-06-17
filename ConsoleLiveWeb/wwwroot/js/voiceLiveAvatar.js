@@ -323,6 +323,7 @@ function sendStartupConfiguration(session) {
         type: 'app.voice_live_avatar.configure',
         avatarCharacter: session.sessionOptions.avatarCharacter || '',
         avatarStyle: session.sessionOptions.avatarStyle || '',
+        voiceName: session.sessionOptions.voiceName || '',
         voiceTemperature: session.sessionOptions.voiceTemperature,
         instructions: session.sessionOptions.instructions || ''
     }));

@@ -155,6 +155,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
             return new VoiceLiveAvatarRuntimeOptions(
                 GetString(root, "avatarCharacter"),
                 GetString(root, "avatarStyle"),
+                GetString(root, "voiceName"),
                 GetNullableDouble(root, "voiceTemperature"),
                 GetString(root, "instructions"));
         }
@@ -384,12 +385,13 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
             selectedAvatarCharacter,
             FirstNonEmpty(runtimeOptions.AvatarStyle, avatarStyle, DefaultAvatarStyle));
         double selectedVoiceTemperature = NormalizeVoiceTemperature(runtimeOptions.VoiceTemperature);
+        string selectedVoiceName = FirstNonEmpty(runtimeOptions.VoiceName, voiceName, DefaultVoiceName);
         string selectedInstructions = FirstNonEmpty(runtimeOptions.Instructions, instructions, DefaultInstructions);
 
         return new VoiceLiveAvatarWithWebIqSettings(
             endpoint,
             key,
-            string.IsNullOrWhiteSpace(voiceName) ? DefaultVoiceName : voiceName,
+            selectedVoiceName,
             selectedModel,
             selectedInstructions,
             selectedAvatarCharacter,
@@ -824,10 +826,11 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
     private sealed record VoiceLiveAvatarRuntimeOptions(
         string? AvatarCharacter,
         string? AvatarStyle,
+        string? VoiceName,
         double? VoiceTemperature,
         string? Instructions)
     {
-        public static VoiceLiveAvatarRuntimeOptions Empty { get; } = new(null, null, null, null);
+        public static VoiceLiveAvatarRuntimeOptions Empty { get; } = new(null, null, null, null, null);
     }
 
     private sealed class FunctionCallState

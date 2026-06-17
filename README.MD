@@ -3,7 +3,7 @@
 Azure Speech and Voice Live samples in two .NET 10 projects:
 
 - `ConsoleVoiceLive`: console menu for Text-To-Speech and VoiceLiveAssistant.
-- `ConsoleLiveWeb`: Blazor Web App for browser-based Text-To-Speech, Voice Live, text-to-avatar, and voice-live-avatar experiments.
+- `ConsoleLiveWeb`: Blazor Web App for browser-based Text-To-Speech, Voice Live, text-to-avatar, agent, and avatar experiments.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ Azure Speech and Voice Live samples in two .NET 10 projects:
 - An Azure AI Speech or Foundry Speech-capable resource.
 - A Speech endpoint like `https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com`.
 - A Speech resource key.
-- An Azure OpenAI deployment for Agent Text to Speech.
+- An Azure OpenAI deployment for agent pages.
 - macOS voice capture/playback for the console VoiceLiveAssistant uses SoX:
 
 ```zsh
@@ -74,8 +74,8 @@ Create `ConsoleLiveWeb/secrets.appsettings.json`:
 }
 ```
 
-`WebIQ-MCP` is needed for WebIQ grounded lookup features, including the `Use WebIQ` toggle on Text-To-Speech and Agent Text to Speech. The WebIQ key stays server-side in `secrets.appsettings.json`.
-`AzureOpenAI` is needed for the Agent Text to Speech page.
+`WebIQ-MCP` is needed for WebIQ grounded lookup features, including the `Use WebIQ` toggle on Text-To-Speech, Agent Text to Speech, and Agent Avatar. The WebIQ key stays server-side in `secrets.appsettings.json`.
+`AzureOpenAI` is needed for the agent pages.
 
 The Blazor app reads non-secret defaults from `ConsoleLiveWeb/appsettings.json`, including voice, model, instructions, TTS prosody defaults, and avatar defaults.
 
@@ -119,6 +119,7 @@ Useful routes:
 - `/text-to-videoavatar`
 - `/voice-live-avatar`
 - `/agent-text-to-speech`
+- `/agent-avatar`
 
 ## Troubleshooting
 
@@ -147,9 +148,9 @@ If WebIQ lookup fails, confirm:
 - `WebIQ-MCP:headers:x-apikey` is set in `ConsoleLiveWeb/secrets.appsettings.json`.
 - The WebIQ key is not the placeholder value.
 - The key is never committed or rendered in the browser.
-- For Agent Text to Speech, turning on `Use WebIQ` requires a working MCP connection; the agent will show an error instead of answering from model memory if WebIQ cannot be reached.
+- For Agent Text to Speech and Agent Avatar, turning on `Use WebIQ` requires a working MCP connection; the agent will show an error instead of answering from model memory if WebIQ cannot be reached.
 
-If Agent Text to Speech fails, confirm:
+If an agent page fails, confirm:
 
 - `AzureOpenAI:Endpoint`, `AzureOpenAI:APIKey`, and `AzureOpenAI:ModelDeploymentName` are set in `ConsoleLiveWeb/secrets.appsettings.json`.
 - The endpoint is the Azure OpenAI resource endpoint, not the Speech endpoint.

@@ -1,0 +1,308 @@
+@page "/agent-avatar"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using ConsoleLiveWeb.Services
+@inject IJSRuntime JS
+@inject AgentQuestionService AgentQuestion
+@inject TextToVideoAvatarService AvatarService
+
+<PageTitle>Agent Avatar</PageTitle>
+
+<h1>Agent Avatar</h1>
+
+<div class="avatar-panel">
+    <label class="form-label" for="agent-avatar-question">Question</label>
+    <textarea id="agent-avatar-question"
+              class="form-control"
+              rows="5"
+              @bind="Question"
+              @bind:event="oninput"
+              disabled="@IsBusy"
+              placeholder="Ask the agent a question."></textarea>
+
+    <div class="agent-tts-webiq-toggle form-check form-switch">
+        <input id="agent-avatar-use-webiq"
+               class="form-check-input"
+               type="checkbox"
+               role="switch"
+               @bind="UseWebIq"
+               disabled="@IsBusy" />
+        <label class="form-check-label" for="agent-avatar-use-webiq">
+            Use WebIQ
+        </label>
+    </div>
+
+    <div class="avatar-actions">
+        <button class="btn btn-primary" @onclick="AskAvatarAsync" disabled="@IsBusy">
+            @ActionButtonText
+        </button>
+        <button class="btn btn-outline-secondary" @onclick="StopAsync" disabled="@(!IsSessionStarted && !IsGeneratingAvatar)">
+            Stop
+        </button>
+    </div>
+
+    <div class="avatar-status">
+        <span class="avatar-status-dot @(IsSessionStarted ? "is-running" : null)" aria-hidden="true"></span>
+        <span>@StatusMessage</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(AgentErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@AgentErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(AvatarErrorMessage))
+    {
+        <div class="alert alert-warning" role="status">@AvatarErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(AgentAnswer))
+    {
+        <section class="agent-tts-answer" aria-live="polite">
+            <h2>Agent Response</h2>
+            @if (UsedWebIqForAnswer)
+            {
+                <div class="agent-tts-grounding" role="status">
+                    WebIQ grounding was used for this response.
+                </div>
+            }
+            <p>@AgentAnswer</p>
+        </section>
+    }
+
+    <div class="avatar-stage">
+        <video @ref="AvatarVideo"
+               class="avatar-video"
+               autoplay
+               playsinline></video>
+        <audio @ref="AvatarAudio" class="avatar-audio" autoplay></audio>
+        @if (!IsSessionStarted)
+        {
+            <div class="avatar-placeholder">Avatar video will appear here.</div>
+        }
+    </div>
+</div>
+
+@code {
+    private readonly Guid ClientId = Guid.NewGuid();
+
+    private IJSObjectReference? Module;
+    private DotNetObjectReference<AgentAvatar>? ComponentReference;
+    private ElementReference AvatarVideo;
+    private ElementReference AvatarAudio;
+
+    private string Question { get; set; } = "What is Azure OpenAI?";
+    private bool UseWebIq { get; set; }
+    private bool IsAskingAgent { get; set; }
+    private bool IsGeneratingAvatar { get; set; }
+    private bool IsSessionStarted { get; set; }
+    private bool UsedWebIqForAnswer { get; set; }
+    private string StatusMessage { get; set; } = "Idle";
+    private string? AgentErrorMessage { get; set; }
+    private string? AvatarErrorMessage { get; set; }
+    private string? AgentAnswer { get; set; }
+
+    private bool IsBusy => IsAskingAgent || IsGeneratingAvatar;
+
+    private string ActionButtonText => IsAskingAgent
+        ? "Asking..."
+        : IsGeneratingAvatar
+            ? "Speaking..."
+            : "Ask avatar";
+
+    private async Task AskAvatarAsync()
+    {
+        AgentErrorMessage = null;
+        AvatarErrorMessage = null;
+        AgentAnswer = null;
+        UsedWebIqForAnswer = false;
+
+        if (string.IsNullOrWhiteSpace(Question))
+        {
+            AgentErrorMessage = "Enter a question for the agent.";
+            return;
+        }
+
+        IsAskingAgent = true;
+        StatusMessage = UseWebIq ? "Asking agent with WebIQ..." : "Asking agent...";
+
+        try
+        {
+            AgentQuestionResponse agentResponse = await AgentQuestion.AskAsync(Question, UseWebIq);
+
+            if (!agentResponse.Succeeded || string.IsNullOrWhiteSpace(agentResponse.Answer))
+            {
+                AgentErrorMessage = agentResponse.ErrorMessage ?? "The agent request failed.";
+                StatusMessage = "Agent request failed.";
+                return;
+            }
+
+            AgentAnswer = agentResponse.Answer;
+            UsedWebIqForAnswer = agentResponse.UsedWebIq;
+        }
+        finally
+        {
+            IsAskingAgent = false;
+        }
+
+        await InvokeAsync(StateHasChanged);
+
+        IsGeneratingAvatar = true;
+        StatusMessage = IsSessionStarted ? "Sending answer to avatar..." : "Starting avatar session...";
+
+        try
+        {
+            Module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/textToVideoAvatar.js");
+            ComponentReference ??= DotNetObjectReference.Create(this);
+            await Module.InvokeVoidAsync("startAndSpeak", ComponentReference, AvatarVideo, AvatarAudio, AgentAnswer);
+        }
+        catch (JSException ex)
+        {
+            AvatarErrorMessage = ex.Message;
+            StatusMessage = "Unable to generate avatar video.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            AvatarErrorMessage = ex.Message;
+            StatusMessage = "Unable to generate avatar video.";
+        }
+        finally
+        {
+            IsGeneratingAvatar = false;
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        AvatarErrorMessage = null;
+
+        if (Module is not null)
+        {
+            await Module.InvokeVoidAsync("stopSession");
+        }
+        else
+        {
+            await AvatarService.DisconnectAsync(ClientId);
+            MarkStopped("Stopped.");
+        }
+    }
+
+    [JSInvokable]
+    public async Task<TextToVideoAvatarIceResponse> GetAvatarIceServersAsync()
+    {
+        StatusMessage = "Fetching avatar relay token...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarIceResponse response = await AvatarService.GetIceServersAsync(ClientId);
+        if (!response.Succeeded)
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to fetch avatar relay token.");
+        }
+
+        return response;
+    }
+
+    [JSInvokable]
+    public async Task<string> ConnectAvatarAsync(string localSdpBase64)
+    {
+        StatusMessage = "Connecting to Azure avatar service...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarConnectResponse response = await AvatarService.ConnectAsync(ClientId, localSdpBase64);
+        if (!response.Succeeded || string.IsNullOrWhiteSpace(response.RemoteSdpBase64))
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to connect avatar session.");
+        }
+
+        return response.RemoteSdpBase64;
+    }
+
+    [JSInvokable]
+    public async Task SpeakAvatarTextAsync(string text)
+    {
+        StatusMessage = "Avatar is speaking...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarSpeakResponse response = await AvatarService.SpeakTextAsync(ClientId, text);
+        if (!response.Succeeded)
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to make the avatar speak.");
+        }
+
+        StatusMessage = "Ready.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStarted()
+    {
+        IsSessionStarted = true;
+        StatusMessage = "Avatar session ready.";
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStatus(string message)
+    {
+        StatusMessage = message;
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnAvatarError(string message)
+    {
+        AvatarErrorMessage = message;
+        IsGeneratingAvatar = false;
+        StatusMessage = "Avatar error.";
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task DisconnectAvatarAsync()
+    {
+        await AvatarService.DisconnectAsync(ClientId);
+        MarkStopped("Stopped.");
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStopped(string message)
+    {
+        MarkStopped(message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    private void MarkStopped(string message)
+    {
+        IsGeneratingAvatar = false;
+        IsSessionStarted = false;
+        StatusMessage = message;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Module is not null)
+        {
+            try
+            {
+                await Module.InvokeVoidAsync("stopSession");
+                await Module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The Blazor circuit is already gone.
+            }
+        }
+
+        await AvatarService.DisconnectAsync(ClientId);
+        ComponentReference?.Dispose();
+    }
+}

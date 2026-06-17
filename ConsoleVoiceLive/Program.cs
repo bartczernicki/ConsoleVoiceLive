@@ -13,30 +13,58 @@ internal class Program
     {
         try
         {
-            SpeechSettings settings = LoadSettings();
-            WriteConfiguredSpeechSettings(settings);
+            WriteMenu();
 
-            using var speechSynthesizer = CreateSpeechSynthesizer(settings);
+            string? selection = Console.ReadLine();
 
-            Console.WriteLine("Enter some text that you want to speak >");
-            string? text = Console.ReadLine();
-
-            if (string.IsNullOrWhiteSpace(text))
+            return selection switch
             {
-                Console.WriteLine("No text was entered. Nothing to synthesize.");
-                return 1;
-            }
-
-            SpeechSynthesisResult result = await speechSynthesizer.SpeakTextAsync(text);
-            OutputSpeechSynthesisResult(result, text);
-
-            return result.Reason == ResultReason.SynthesizingAudioCompleted ? 0 : 1;
+                "1" => await RunTextToSpeechAsync(),
+                _ => ExitForUnknownMenuSelection(selection)
+            };
         }
         catch (Exception ex) when (ex is InvalidOperationException or UriFormatException)
         {
             Console.WriteLine(ex.Message);
             return 1;
         }
+    }
+
+    private static void WriteMenu()
+    {
+        Console.WriteLine("Console Voice Live");
+        Console.WriteLine();
+        Console.WriteLine("1. Text-To-Speech");
+        Console.WriteLine();
+        Console.Write("Select an option > ");
+    }
+
+    private static async Task<int> RunTextToSpeechAsync()
+    {
+        SpeechSettings settings = LoadSettings();
+        WriteConfiguredSpeechSettings(settings);
+
+        using var speechSynthesizer = CreateSpeechSynthesizer(settings);
+
+        Console.WriteLine("Enter some text that you want to speak >");
+        string? text = Console.ReadLine();
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Console.WriteLine("No text was entered. Nothing to synthesize.");
+            return 1;
+        }
+
+        SpeechSynthesisResult result = await speechSynthesizer.SpeakTextAsync(text);
+        OutputSpeechSynthesisResult(result, text);
+
+        return result.Reason == ResultReason.SynthesizingAudioCompleted ? 0 : 1;
+    }
+
+    private static int ExitForUnknownMenuSelection(string? selection)
+    {
+        Console.WriteLine($"Unknown option: {selection ?? "(blank)"}");
+        return 1;
     }
 
     private static SpeechSettings LoadSettings()

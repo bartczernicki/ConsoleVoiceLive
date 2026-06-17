@@ -50,6 +50,10 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-camera-video-fill' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.555A1 1 0 0 1 16 4.077v7.846a1 1 0 0 1-1.447.894l-3.07-1.535A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2z'/%3E%3C/svg%3E");
 }
 
+.bi-person-video3-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-person-video3' viewBox='0 0 16 16'%3E%3Cpath d='M14 9.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0'/%3E%3Cpath d='M6 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zm4.03 10.185A.5.5 0 0 1 9.5 12h-.5a.5.5 0 0 1-.5-.5v-.275c0-.418.336-.77.753-.77h2.994c.417 0 .753.352.753.77v.275a.5.5 0 0 1-.5.5H12a.5.5 0 0 1-.53.185 3.5 3.5 0 0 0-1.44 0'/%3E%3Cpath d='M2 14V2H0v12a2 2 0 0 0 2 2h12v-2z'/%3E%3C/svg%3E");
+}
+
 .nav-item {
     font-size: 0.9rem;
     padding-bottom: 0.5rem;

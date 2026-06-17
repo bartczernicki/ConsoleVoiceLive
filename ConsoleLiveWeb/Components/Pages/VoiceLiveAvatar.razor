@@ -1,0 +1,201 @@
+@page "/voice-live-avatar"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<PageTitle>VoiceLiveAvatar</PageTitle>
+
+<h1>VoiceLiveAvatar</h1>
+
+<div class="voice-avatar-panel">
+    <div class="voice-avatar-actions">
+        <button class="btn btn-primary" @onclick="StartAsync" disabled="@(IsStarting || IsRunning)">
+            @(IsStarting ? "Starting..." : "Start")
+        </button>
+        <button class="btn btn-outline-secondary" @onclick="StopAsync" disabled="@(!IsStarting && !IsRunning)">
+            Stop
+        </button>
+    </div>
+
+    <div class="voice-avatar-status">
+        <span class="voice-avatar-status-dot @(IsRunning ? "is-running" : null)" aria-hidden="true"></span>
+        <span>@StatusMessage</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+    }
+
+    <div class="voice-avatar-stage">
+        <video @ref="AvatarVideo"
+               class="voice-avatar-video"
+               autoplay
+               playsinline></video>
+        <audio @ref="AvatarAudio" class="voice-avatar-audio" autoplay></audio>
+        @if (!IsRunning)
+        {
+            <div class="voice-avatar-placeholder">Avatar video will appear here.</div>
+        }
+    </div>
+
+    <section class="voice-avatar-log" aria-live="polite" aria-label="Voice Live avatar conversation log">
+        @if (Events.Count == 0)
+        {
+            <p class="voice-avatar-empty">Start the session and speak into your microphone.</p>
+        }
+        else
+        {
+            @foreach (VoiceAvatarEvent item in Events)
+            {
+                <div class="voice-avatar-event">
+                    <span class="voice-avatar-event-type">@item.Type</span>
+                    @if (!string.IsNullOrWhiteSpace(item.Message))
+                    {
+                        <span>@item.Message</span>
+                    }
+                </div>
+            }
+        }
+    </section>
+</div>
+
+@code {
+    private const int MaxEvents = 80;
+
+    private IJSObjectReference? Module;
+    private DotNetObjectReference<VoiceLiveAvatar>? ComponentReference;
+    private ElementReference AvatarVideo;
+    private ElementReference AvatarAudio;
+
+    private bool IsStarting { get; set; }
+    private bool IsRunning { get; set; }
+    private string StatusMessage { get; set; } = "Idle";
+    private string? ErrorMessage { get; set; }
+    private List<VoiceAvatarEvent> Events { get; } = [];
+
+    private async Task StartAsync()
+    {
+        ErrorMessage = null;
+        Events.Clear();
+        IsStarting = true;
+        StatusMessage = "Preparing microphone...";
+
+        try
+        {
+            Module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/voiceLiveAvatar.js");
+            ComponentReference ??= DotNetObjectReference.Create(this);
+
+            await Module.InvokeVoidAsync("start", ComponentReference, AvatarVideo, AvatarAudio);
+        }
+        catch (JSException ex)
+        {
+            ErrorMessage = ex.Message;
+            IsRunning = false;
+            IsStarting = false;
+            StatusMessage = "Unable to start.";
+            AddEvent("error", ex.Message);
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        if (Module is not null)
+        {
+            await Module.InvokeVoidAsync("stop");
+        }
+
+        MarkStopped("Stopped.");
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveAvatarStarted()
+    {
+        IsStarting = false;
+        IsRunning = true;
+        StatusMessage = "Connected. Start speaking.";
+        AddEvent("connected", "Voice Live avatar is listening.");
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveAvatarStatus(string message)
+    {
+        StatusMessage = message;
+        AddEvent("status", message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveAvatarEvent(string type, string? message)
+    {
+        AddEvent(type, message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveAvatarError(string message)
+    {
+        ErrorMessage = message;
+        IsStarting = false;
+        IsRunning = false;
+        StatusMessage = "Error.";
+        AddEvent("error", message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveAvatarStopped(string message)
+    {
+        MarkStopped(message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    private void MarkStopped(string message)
+    {
+        IsStarting = false;
+        IsRunning = false;
+        StatusMessage = message;
+        AddEvent("stopped", message);
+    }
+
+    private void AddEvent(string type, string? message)
+    {
+        Events.Insert(0, new VoiceAvatarEvent(type, message));
+
+        if (Events.Count > MaxEvents)
+        {
+            Events.RemoveRange(MaxEvents, Events.Count - MaxEvents);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Module is not null)
+        {
+            try
+            {
+                await Module.InvokeVoidAsync("stop");
+                await Module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The SignalR circuit is already gone.
+            }
+        }
+
+        ComponentReference?.Dispose();
+    }
+
+    private sealed record VoiceAvatarEvent(string Type, string? Message);
+}

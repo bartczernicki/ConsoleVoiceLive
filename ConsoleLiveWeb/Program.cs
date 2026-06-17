@@ -10,6 +10,7 @@ builder.Services.AddRazorComponents()
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<SpeechSynthesisService>();
 builder.Services.AddScoped<VoiceLiveSignalingProxy>();
+builder.Services.AddScoped<VoiceLiveAvatarProxy>();
 builder.Services.AddSingleton<TextToVideoAvatarService>();
 
 var app = builder.Build();
@@ -29,6 +30,10 @@ app.UseAntiforgery();
 
 app.MapStaticAssets();
 app.Map("/voice-live/signaling", async (HttpContext context, VoiceLiveSignalingProxy proxy) =>
+{
+    await proxy.HandleAsync(context);
+});
+app.Map("/voice-live-avatar/session", async (HttpContext context, VoiceLiveAvatarProxy proxy) =>
 {
     await proxy.HandleAsync(context);
 });

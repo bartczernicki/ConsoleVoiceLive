@@ -1,0 +1,78 @@
+@page "/text-to-speech"
+@page "/"
+@rendermode InteractiveServer
+@using ConsoleLiveWeb.Services
+@inject SpeechSynthesisService SpeechSynthesis
+
+<PageTitle>Text-To-Speech</PageTitle>
+
+<h1>Text-To-Speech</h1>
+
+<div class="tts-panel">
+    <label class="form-label" for="speech-text">Text</label>
+    <textarea id="speech-text"
+              class="form-control"
+              rows="6"
+              @bind="Text"
+              @bind:event="oninput"
+              disabled="@IsSynthesizing"
+              placeholder="Hello from Azure Speech."></textarea>
+
+    <div class="tts-actions">
+        <button class="btn btn-primary" @onclick="ReadAloudAsync" disabled="@IsSynthesizing">
+            @(IsSynthesizing ? "Synthesizing..." : "Read aloud")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(AudioSource))
+    {
+        <audio @key="AudioSource" class="tts-audio" controls autoplay src="@AudioSource"></audio>
+    }
+</div>
+
+@code {
+    private string Text { get; set; } = "Hello from the Blazor Text-To-Speech app.";
+
+    private bool IsSynthesizing { get; set; }
+
+    private string? ErrorMessage { get; set; }
+
+    private string? AudioSource { get; set; }
+
+    private async Task ReadAloudAsync()
+    {
+        ErrorMessage = null;
+        AudioSource = null;
+
+        if (string.IsNullOrWhiteSpace(Text))
+        {
+            ErrorMessage = "Enter text to synthesize.";
+            return;
+        }
+
+        IsSynthesizing = true;
+
+        try
+        {
+            SpeechSynthesisResponse response = await SpeechSynthesis.SynthesizeAsync(Text);
+
+            if (!response.Succeeded || response.AudioData is null)
+            {
+                ErrorMessage = response.ErrorMessage ?? "Speech synthesis failed.";
+                return;
+            }
+
+            string base64Audio = Convert.ToBase64String(response.AudioData);
+            AudioSource = $"data:audio/mpeg;base64,{base64Audio}";
+        }
+        finally
+        {
+            IsSynthesizing = false;
+        }
+    }
+}

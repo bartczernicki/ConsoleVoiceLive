@@ -1,0 +1,240 @@
+@page "/text-to-videoavatar"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@using ConsoleLiveWeb.Services
+@inject IJSRuntime JS
+@inject TextToVideoAvatarService AvatarService
+
+<PageTitle>Text-To-VideoAvatar</PageTitle>
+
+<h1>Text-To-VideoAvatar</h1>
+
+<div class="avatar-panel">
+    <label class="form-label" for="avatar-text">Text</label>
+    <textarea id="avatar-text"
+              class="form-control"
+              rows="6"
+              @bind="Text"
+              @bind:event="oninput"
+              disabled="@IsGenerating"
+              placeholder="Hello from Azure Text to Speech Avatar."></textarea>
+
+    <div class="avatar-actions">
+        <button class="btn btn-primary" @onclick="GenerateAsync" disabled="@IsGenerating">
+            @(IsGenerating ? "Generating..." : "Generate video avatar")
+        </button>
+        <button class="btn btn-outline-secondary" @onclick="StopAsync" disabled="@(!IsSessionStarted && !IsGenerating)">
+            Stop
+        </button>
+    </div>
+
+    <div class="avatar-status">
+        <span class="avatar-status-dot @(IsSessionStarted ? "is-running" : null)" aria-hidden="true"></span>
+        <span>@StatusMessage</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+    }
+
+    <div class="avatar-stage">
+        <video @ref="AvatarVideo"
+               class="avatar-video"
+               autoplay
+               playsinline></video>
+        <audio @ref="AvatarAudio" class="avatar-audio" autoplay></audio>
+        @if (!IsSessionStarted)
+        {
+            <div class="avatar-placeholder">Avatar video will appear here.</div>
+        }
+    </div>
+</div>
+
+@code {
+    private readonly Guid ClientId = Guid.NewGuid();
+
+    private IJSObjectReference? Module;
+    private DotNetObjectReference<TextToVideoAvatar>? ComponentReference;
+    private ElementReference AvatarVideo;
+    private ElementReference AvatarAudio;
+
+    private string Text { get; set; } = "Hello from the Blazor Text-To-VideoAvatar app.";
+
+    private bool IsGenerating { get; set; }
+
+    private bool IsSessionStarted { get; set; }
+
+    private string StatusMessage { get; set; } = "Idle";
+
+    private string? ErrorMessage { get; set; }
+
+    private async Task GenerateAsync()
+    {
+        ErrorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(Text))
+        {
+            ErrorMessage = "Enter text for the avatar to speak.";
+            return;
+        }
+
+        IsGenerating = true;
+        StatusMessage = IsSessionStarted ? "Sending text to avatar..." : "Starting avatar session...";
+
+        try
+        {
+            Module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/textToVideoAvatar.js");
+            ComponentReference ??= DotNetObjectReference.Create(this);
+            await Module.InvokeVoidAsync("startAndSpeak", ComponentReference, AvatarVideo, AvatarAudio, Text);
+        }
+        catch (JSException ex)
+        {
+            ErrorMessage = ex.Message;
+            StatusMessage = "Unable to generate avatar video.";
+        }
+        catch (InvalidOperationException ex)
+        {
+            ErrorMessage = ex.Message;
+            StatusMessage = "Unable to generate avatar video.";
+        }
+        finally
+        {
+            IsGenerating = false;
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        ErrorMessage = null;
+
+        if (Module is not null)
+        {
+            await Module.InvokeVoidAsync("stopSession");
+        }
+        else
+        {
+            await AvatarService.DisconnectAsync(ClientId);
+            MarkStopped("Stopped.");
+        }
+    }
+
+    [JSInvokable]
+    public async Task<TextToVideoAvatarIceResponse> GetAvatarIceServersAsync()
+    {
+        StatusMessage = "Fetching avatar relay token...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarIceResponse response = await AvatarService.GetIceServersAsync(ClientId);
+        if (!response.Succeeded)
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to fetch avatar relay token.");
+        }
+
+        return response;
+    }
+
+    [JSInvokable]
+    public async Task<string> ConnectAvatarAsync(string localSdpBase64)
+    {
+        StatusMessage = "Connecting to Azure avatar service...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarConnectResponse response = await AvatarService.ConnectAsync(ClientId, localSdpBase64);
+        if (!response.Succeeded || string.IsNullOrWhiteSpace(response.RemoteSdpBase64))
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to connect avatar session.");
+        }
+
+        return response.RemoteSdpBase64;
+    }
+
+    [JSInvokable]
+    public async Task SpeakAvatarTextAsync(string text)
+    {
+        StatusMessage = "Avatar is speaking...";
+        await InvokeAsync(StateHasChanged);
+
+        TextToVideoAvatarSpeakResponse response = await AvatarService.SpeakTextAsync(ClientId, text);
+        if (!response.Succeeded)
+        {
+            throw new InvalidOperationException(response.ErrorMessage ?? "Unable to make the avatar speak.");
+        }
+
+        StatusMessage = "Ready.";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStarted()
+    {
+        IsSessionStarted = true;
+        StatusMessage = "Avatar session ready.";
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStatus(string message)
+    {
+        StatusMessage = message;
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnAvatarError(string message)
+    {
+        ErrorMessage = message;
+        IsGenerating = false;
+        StatusMessage = "Avatar error.";
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task DisconnectAvatarAsync()
+    {
+        await AvatarService.DisconnectAsync(ClientId);
+        MarkStopped("Stopped.");
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task OnAvatarStopped(string message)
+    {
+        MarkStopped(message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    private void MarkStopped(string message)
+    {
+        IsGenerating = false;
+        IsSessionStarted = false;
+        StatusMessage = message;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Module is not null)
+        {
+            try
+            {
+                await Module.InvokeVoidAsync("stopSession");
+                await Module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The Blazor circuit is already gone.
+            }
+        }
+
+        await AvatarService.DisconnectAsync(ClientId);
+        ComponentReference?.Dispose();
+    }
+}

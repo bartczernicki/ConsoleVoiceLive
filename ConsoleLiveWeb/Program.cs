@@ -7,8 +7,10 @@ builder.Configuration.AddJsonFile("secrets.appsettings.json", optional: false, r
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<SpeechSynthesisService>();
 builder.Services.AddScoped<VoiceLiveSignalingProxy>();
+builder.Services.AddSingleton<TextToVideoAvatarService>();
 
 var app = builder.Build();
 

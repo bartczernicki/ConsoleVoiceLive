@@ -22,6 +22,7 @@ internal class Program
             return selection switch
             {
                 "1" => await RunTextToSpeechAsync(),
+                "2" => await RunVoiceLiveAssistantAsync(),
                 _ => ExitForUnknownMenuSelection(selection)
             };
         }
@@ -37,6 +38,7 @@ internal class Program
         Console.WriteLine("Console Voice Live");
         Console.WriteLine();
         Console.WriteLine("1. Text-To-Speech");
+        Console.WriteLine("2. VoiceLiveAssistant");
         Console.WriteLine();
         Console.Write("Select an option > ");
     }
@@ -61,6 +63,54 @@ internal class Program
         OutputSpeechSynthesisResult(result, text);
 
         return result.Reason == ResultReason.SynthesizingAudioCompleted ? 0 : 1;
+    }
+
+    private static async Task<int> RunVoiceLiveAssistantAsync()
+    {
+        SpeechSettings settings = LoadSettings();
+        WriteConfiguredSpeechSettings(settings);
+
+        if (!SoxAudioBridge.TryCreate(out SoxAudioBridge? audioBridge, out string audioError))
+        {
+            Console.WriteLine(audioError);
+            return 1;
+        }
+
+        using var cancellationTokenSource = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellationTokenSource.Cancel();
+        };
+
+        Console.CancelKeyPress += cancelHandler;
+
+        try
+        {
+            SoxAudioBridge bridge = audioBridge!;
+
+            await using (bridge)
+            {
+                var assistant = new VoiceLiveAssistant(settings, bridge);
+                await assistant.StartAsync(cancellationTokenSource.Token);
+            }
+
+            return 0;
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("VoiceLiveAssistant stopped.");
+            return 0;
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.WriteLine(ex.Message);
+            return 1;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+        }
     }
 
     private static int ExitForUnknownMenuSelection(string? selection)
@@ -161,10 +211,4 @@ internal class Program
         }
     }
 
-    private sealed record SpeechSettings(
-        string Endpoint,
-        string Key,
-        string VoiceName,
-        string Model,
-        string Instructions);
 }

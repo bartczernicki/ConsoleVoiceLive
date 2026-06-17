@@ -18,11 +18,87 @@
               disabled="@IsSynthesizing"
               placeholder="Hello from Azure Speech."></textarea>
 
+    <div class="tts-controls">
+        <div class="tts-control tts-control-wide">
+            <label class="form-label" for="tts-voice">Voice</label>
+            <select id="tts-voice"
+                    class="form-select"
+                    value="@SelectedVoiceName"
+                    @onchange="OnVoiceChanged"
+                    disabled="@(IsSynthesizing || IsLoadingVoices)">
+                @foreach (SpeechVoiceOption voice in VoiceOptions)
+                {
+                    <option value="@voice.Name">@GetVoiceLabel(voice)</option>
+                }
+            </select>
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="tts-output-format">Output</label>
+            <select id="tts-output-format"
+                    class="form-select"
+                    @bind="SelectedOutputFormat"
+                    disabled="@IsSynthesizing">
+                @foreach (SpeechOutputFormatOption format in OutputFormats)
+                {
+                    <option value="@format.Value">@format.Label</option>
+                }
+            </select>
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="tts-rate">Rate <span>@FormatPercent(RatePercent)</span></label>
+            <input id="tts-rate"
+                   class="form-range"
+                   type="range"
+                   min="-50"
+                   max="100"
+                   step="5"
+                   @bind="RatePercent"
+                   @bind:event="oninput"
+                   disabled="@IsSynthesizing" />
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="tts-pitch">Pitch <span>@FormatPercent(PitchPercent)</span></label>
+            <input id="tts-pitch"
+                   class="form-range"
+                   type="range"
+                   min="-50"
+                   max="50"
+                   step="5"
+                   @bind="PitchPercent"
+                   @bind:event="oninput"
+                   disabled="@IsSynthesizing" />
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="tts-volume">Volume <span>@Volume</span></label>
+            <input id="tts-volume"
+                   class="form-range"
+                   type="range"
+                   min="0"
+                   max="100"
+                   step="5"
+                   @bind="Volume"
+                   @bind:event="oninput"
+                   disabled="@IsSynthesizing" />
+        </div>
+    </div>
+
     <div class="tts-actions">
         <button class="btn btn-primary" @onclick="ReadAloudAsync" disabled="@IsSynthesizing">
             @(IsSynthesizing ? "Synthesizing..." : "Read aloud")
         </button>
+        <button class="btn btn-outline-secondary" @onclick="ResetDefaults" disabled="@IsSynthesizing">
+            Reset defaults
+        </button>
     </div>
+
+    @if (!string.IsNullOrWhiteSpace(VoiceNotice))
+    {
+        <div class="alert alert-warning" role="status">@VoiceNotice</div>
+    }
 
     @if (!string.IsNullOrWhiteSpace(ErrorMessage))
     {
@@ -36,13 +112,64 @@
 </div>
 
 @code {
+    private SpeechSynthesisDefaults Defaults = null!;
+    private IReadOnlyList<SpeechOutputFormatOption> OutputFormats = [];
+    private List<SpeechVoiceOption> VoiceOptions { get; } = [];
+
     private string Text { get; set; } = "Hello from the Blazor Text-To-Speech app.";
+    private string SelectedVoiceName { get; set; } = string.Empty;
+    private string SelectedLocale { get; set; } = string.Empty;
+    private string SelectedOutputFormat { get; set; } = string.Empty;
+    private int RatePercent { get; set; }
+    private int PitchPercent { get; set; }
+    private int Volume { get; set; }
 
+    private bool IsLoadingVoices { get; set; }
     private bool IsSynthesizing { get; set; }
-
+    private string? VoiceNotice { get; set; }
     private string? ErrorMessage { get; set; }
-
     private string? AudioSource { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Defaults = SpeechSynthesis.GetDefaults();
+        OutputFormats = SpeechSynthesis.GetOutputFormats();
+        ResetDefaults();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await LoadVoicesAsync();
+    }
+
+    private async Task LoadVoicesAsync()
+    {
+        IsLoadingVoices = true;
+        VoiceNotice = null;
+        StateHasChanged();
+
+        SpeechVoiceListResponse response = await SpeechSynthesis.GetVoicesAsync();
+
+        if (response.Succeeded)
+        {
+            VoiceOptions.Clear();
+            VoiceOptions.AddRange(response.Voices);
+            EnsureSelectedVoiceOption();
+            SelectedLocale = FindSelectedVoice()?.Locale ?? SelectedLocale;
+        }
+        else
+        {
+            VoiceNotice = response.ErrorMessage;
+        }
+
+        IsLoadingVoices = false;
+        StateHasChanged();
+    }
 
     private async Task ReadAloudAsync()
     {
@@ -59,7 +186,15 @@
 
         try
         {
-            SpeechSynthesisResponse response = await SpeechSynthesis.SynthesizeAsync(Text);
+            var request = new SpeechSynthesisRequest(
+                Text,
+                SelectedVoiceName,
+                SelectedLocale,
+                SelectedOutputFormat,
+                RatePercent,
+                PitchPercent,
+                Volume);
+            SpeechSynthesisResponse response = await SpeechSynthesis.SynthesizeAsync(request);
 
             if (!response.Succeeded || response.AudioData is null)
             {
@@ -74,5 +209,63 @@
         {
             IsSynthesizing = false;
         }
+    }
+
+    private void ResetDefaults()
+    {
+        SelectedVoiceName = Defaults.VoiceName;
+        SelectedLocale = Defaults.Locale;
+        SelectedOutputFormat = Defaults.OutputFormat;
+        RatePercent = Defaults.RatePercent;
+        PitchPercent = Defaults.PitchPercent;
+        Volume = Defaults.Volume;
+        EnsureSelectedVoiceOption();
+    }
+
+    private void OnVoiceChanged(ChangeEventArgs args)
+    {
+        SelectedVoiceName = Convert.ToString(args.Value) ?? Defaults.VoiceName;
+        SelectedLocale = FindSelectedVoice()?.Locale ?? Defaults.Locale;
+    }
+
+    private void EnsureSelectedVoiceOption()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedVoiceName))
+        {
+            SelectedVoiceName = Defaults.VoiceName;
+            SelectedLocale = Defaults.Locale;
+        }
+
+        if (VoiceOptions.Any(voice => string.Equals(voice.Name, SelectedVoiceName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        VoiceOptions.Insert(0, new SpeechVoiceOption(
+            SelectedVoiceName,
+            SelectedLocale,
+            SelectedVoiceName,
+            "Configured",
+            []));
+    }
+
+    private SpeechVoiceOption? FindSelectedVoice()
+    {
+        return VoiceOptions.FirstOrDefault(voice =>
+            string.Equals(voice.Name, SelectedVoiceName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string GetVoiceLabel(SpeechVoiceOption voice)
+    {
+        string displayName = string.Equals(voice.LocalName, voice.Name, StringComparison.OrdinalIgnoreCase)
+            ? voice.Name
+            : $"{voice.LocalName} ({voice.Name})";
+
+        return $"{displayName} - {voice.Locale} - {voice.Gender}";
+    }
+
+    private static string FormatPercent(int value)
+    {
+        return value > 0 ? $"+{value}%" : $"{value}%";
     }
 }

@@ -173,6 +173,27 @@ a, .btn-link {
     max-width: 980px;
 }
 
+.voice-avatar-config {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.voice-avatar-config-control .form-label {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.voice-avatar-config-wide {
+    grid-column: 1 / -1;
+}
+
+.voice-avatar-config-actions {
+    grid-column: 1 / -1;
+}
+
 .voice-avatar-actions {
     display: flex;
     gap: 0.75rem;
@@ -329,6 +350,10 @@ a, .btn-link {
 }
 
 @media (max-width: 640px) {
+    .voice-avatar-config {
+        grid-template-columns: 1fr;
+    }
+
     .voice-avatar-event {
         grid-template-columns: 1fr;
         gap: 0.15rem;

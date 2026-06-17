@@ -1,6 +1,6 @@
 let currentSession = null;
 
-export async function start(dotNetReference, videoElement, audioElement, sessionPath = '/voice-live-avatar/session') {
+export async function start(dotNetReference, videoElement, audioElement, sessionPath = '/voice-live-avatar/session', sessionOptions = null) {
     if (currentSession) {
         await notifyStatus(currentSession, 'Voice Live Avatar is already running.');
         return;
@@ -18,7 +18,8 @@ export async function start(dotNetReference, videoElement, audioElement, session
         localStream: null,
         peerConnection: null,
         websocket: null,
-        sessionPath
+        sessionPath,
+        sessionOptions
     };
 
     currentSession = session;
@@ -37,6 +38,7 @@ export async function start(dotNetReference, videoElement, audioElement, session
         session.websocket = new WebSocket(getSessionUrl(session.sessionPath));
         wireWebSocket(session);
         await waitForSocketOpen(session.websocket);
+        sendStartupConfiguration(session);
     } catch (error) {
         await notifyError(session, getErrorMessage(error));
         await stop();
@@ -310,6 +312,20 @@ function sendVoiceLiveEvent(session, payload) {
     if (session.websocket?.readyState === WebSocket.OPEN) {
         session.websocket.send(JSON.stringify(payload));
     }
+}
+
+function sendStartupConfiguration(session) {
+    if (!session.sessionOptions || session.websocket?.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    session.websocket.send(JSON.stringify({
+        type: 'app.voice_live_avatar.configure',
+        avatarCharacter: session.sessionOptions.avatarCharacter || '',
+        avatarStyle: session.sessionOptions.avatarStyle || '',
+        voiceTemperature: session.sessionOptions.voiceTemperature,
+        instructions: session.sessionOptions.instructions || ''
+    }));
 }
 
 function waitForSocketOpen(socket) {

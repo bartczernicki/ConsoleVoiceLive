@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @implements IAsyncDisposable
 @inject IJSRuntime JS
+@inject IConfiguration Configuration
 
 <PageTitle>VoiceLiveAvatar With WebIQ</PageTitle>
 
@@ -10,6 +11,66 @@
 <p class="page-description">Speak to a real-time avatar that calls WebIQ for current web intelligence before answering.</p>
 
 <div class="voice-avatar-panel">
+    <div class="voice-avatar-config">
+        <div class="voice-avatar-config-control">
+            <label class="form-label" for="webiq-avatar-character">Avatar character</label>
+            <select id="webiq-avatar-character"
+                    class="form-select"
+                    value="@SelectedAvatarCharacter"
+                    @onchange="OnAvatarCharacterChanged"
+                    disabled="@ControlsDisabled">
+                @foreach (string character in AvatarCharacters)
+                {
+                    <option value="@character">@FormatOption(character)</option>
+                }
+            </select>
+        </div>
+
+        <div class="voice-avatar-config-control">
+            <label class="form-label" for="webiq-avatar-style">Avatar style</label>
+            <select id="webiq-avatar-style"
+                    class="form-select"
+                    @bind="SelectedAvatarStyle"
+                    disabled="@ControlsDisabled">
+                @foreach (string style in CurrentAvatarStyles)
+                {
+                    <option value="@style">@FormatOption(style)</option>
+                }
+            </select>
+        </div>
+
+        <div class="voice-avatar-config-control">
+            <label class="form-label" for="webiq-voice-temperature">
+                Voice temperature <span>@VoiceTemperature.ToString("0.0")</span>
+            </label>
+            <input id="webiq-voice-temperature"
+                   class="form-range"
+                   type="range"
+                   min="0.6"
+                   max="1.2"
+                   step="0.1"
+                   @bind="VoiceTemperature"
+                   @bind:event="oninput"
+                   disabled="@ControlsDisabled" />
+        </div>
+
+        <div class="voice-avatar-config-control voice-avatar-config-wide">
+            <label class="form-label" for="webiq-avatar-instructions">Instructions</label>
+            <textarea id="webiq-avatar-instructions"
+                      class="form-control"
+                      rows="4"
+                      @bind="Instructions"
+                      @bind:event="oninput"
+                      disabled="@ControlsDisabled"></textarea>
+        </div>
+
+        <div class="voice-avatar-config-actions">
+            <button class="btn btn-outline-secondary" @onclick="ResetDefaults" disabled="@ControlsDisabled">
+                Reset defaults
+            </button>
+        </div>
+    </div>
+
     <div class="voice-avatar-actions">
         <button class="btn btn-primary" @onclick="StartAsync" disabled="@(IsStarting || IsRunning)">
             @(IsStarting ? "Starting..." : "Start")
@@ -65,6 +126,15 @@
 @code {
     private const int MaxEvents = 100;
     private const string SessionPath = "/voice-live-avatar-with-webiq/session";
+    private const string DefaultInstructions = "You are a helpful AI assistant. Respond naturally and conversationally. Keep your responses concise but engaging.";
+    private static readonly IReadOnlyDictionary<string, string[]> AvatarOptions =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["lisa"] = ["casual-sitting", "graceful-sitting", "graceful-standing", "technical-sitting", "technical-standing"],
+            ["lori"] = ["casual", "graceful", "formal"],
+            ["max"] = ["business", "casual"],
+            ["harry"] = ["casual", "youthful"]
+        };
 
     private IJSObjectReference? Module;
     private DotNetObjectReference<VoiceLiveAvatarWithWebIq>? ComponentReference;
@@ -76,6 +146,18 @@
     private string StatusMessage { get; set; } = "Idle";
     private string? ErrorMessage { get; set; }
     private List<VoiceAvatarWebIqEvent> Events { get; } = [];
+    private IReadOnlyCollection<string> AvatarCharacters => AvatarOptions.Keys.ToArray();
+    private IReadOnlyCollection<string> CurrentAvatarStyles => AvatarOptions[SelectedAvatarCharacter];
+    private bool ControlsDisabled => IsStarting || IsRunning;
+    private string SelectedAvatarCharacter { get; set; } = "lisa";
+    private string SelectedAvatarStyle { get; set; } = "casual-sitting";
+    private double VoiceTemperature { get; set; } = 0.8;
+    private string Instructions { get; set; } = DefaultInstructions;
+
+    protected override void OnInitialized()
+    {
+        ResetDefaults();
+    }
 
     private async Task StartAsync()
     {
@@ -89,7 +171,19 @@
             Module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/voiceLiveAvatar.js");
             ComponentReference ??= DotNetObjectReference.Create(this);
 
-            await Module.InvokeVoidAsync("start", ComponentReference, AvatarVideo, AvatarAudio, SessionPath);
+            await Module.InvokeVoidAsync(
+                "start",
+                ComponentReference,
+                AvatarVideo,
+                AvatarAudio,
+                SessionPath,
+                new
+                {
+                    avatarCharacter = SelectedAvatarCharacter,
+                    avatarStyle = SelectedAvatarStyle,
+                    voiceTemperature = VoiceTemperature,
+                    instructions = Instructions
+                });
         }
         catch (JSException ex)
         {
@@ -170,6 +264,53 @@
         IsRunning = false;
         StatusMessage = message;
         AddEvent("stopped", message);
+    }
+
+    private void OnAvatarCharacterChanged(ChangeEventArgs args)
+    {
+        string? selected = args.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(selected) || !AvatarOptions.ContainsKey(selected))
+        {
+            selected = "lisa";
+        }
+
+        SelectedAvatarCharacter = selected;
+        if (!AvatarOptions[SelectedAvatarCharacter].Contains(SelectedAvatarStyle, StringComparer.OrdinalIgnoreCase))
+        {
+            SelectedAvatarStyle = AvatarOptions[SelectedAvatarCharacter][0];
+        }
+    }
+
+    private void ResetDefaults()
+    {
+        string configuredCharacter = GetConfiguredValue("Speech:AvatarCharacter", "lisa");
+        SelectedAvatarCharacter = AvatarOptions.ContainsKey(configuredCharacter)
+            ? configuredCharacter
+            : "lisa";
+
+        string configuredStyle = GetConfiguredValue(
+            "Speech:AvatarStyle",
+            SelectedAvatarCharacter == "lisa" ? "casual-sitting" : AvatarOptions[SelectedAvatarCharacter][0]);
+        SelectedAvatarStyle = AvatarOptions[SelectedAvatarCharacter].Contains(configuredStyle, StringComparer.OrdinalIgnoreCase)
+            ? configuredStyle
+            : AvatarOptions[SelectedAvatarCharacter][0];
+
+        VoiceTemperature = 0.8;
+        Instructions = GetConfiguredValue("Speech:Instructions", DefaultInstructions);
+    }
+
+    private string GetConfiguredValue(string key, string fallback)
+    {
+        string? value = Configuration[key];
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
+    private static string FormatOption(string value)
+    {
+        return string.Join(
+            " ",
+            value.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 
     private void AddEvent(string type, string? message)

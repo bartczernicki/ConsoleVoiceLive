@@ -15,12 +15,23 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
     private const string DefaultAvatarCharacter = "lisa";
     private const string DefaultAvatarStyle = "casual-sitting";
     private const string DefaultAvatarBackgroundColor = "#FFFFFFFF";
+    private const double DefaultVoiceTemperature = 0.8;
+    private const double MinVoiceTemperature = 0.6;
+    private const double MaxVoiceTemperature = 1.2;
     private const string PlaceholderEndpoint = "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com";
     private const string PlaceholderKey = "YOUR_SPEECH_KEY";
     private const string WebIqFunctionName = "web_iq_realtime_lookup";
     private const int MaxMessageBytes = 2 * 1024 * 1024;
     private const int MaxLogMessageLength = 1200;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly IReadOnlyDictionary<string, string[]> SupportedAvatarStyles =
+        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["lisa"] = ["casual-sitting", "graceful-sitting", "graceful-standing", "technical-sitting", "technical-standing"],
+            ["lori"] = ["casual", "graceful", "formal"],
+            ["max"] = ["business", "casual"],
+            ["harry"] = ["casual", "youthful"]
+        };
 
     private readonly IConfiguration _configuration;
     private readonly WebIqMcpToolService _webIqMcpToolService;
@@ -50,7 +61,8 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         VoiceLiveAvatarWithWebIqSettings settings;
         try
         {
-            settings = LoadSettings();
+            VoiceLiveAvatarRuntimeOptions runtimeOptions = await ReceiveRuntimeOptionsAsync(browserSocket, context.RequestAborted);
+            settings = LoadSettings(runtimeOptions);
         }
         catch (InvalidOperationException ex)
         {
@@ -118,6 +130,37 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         {
             await CloseSocketAsync(browserSocket, WebSocketCloseStatus.NormalClosure, "Voice Live Avatar With WebIQ stopped");
             await CloseSocketAsync(azureSocket, WebSocketCloseStatus.NormalClosure, "Voice Live Avatar With WebIQ stopped");
+        }
+    }
+
+    private static async Task<VoiceLiveAvatarRuntimeOptions> ReceiveRuntimeOptionsAsync(
+        WebSocket browserSocket,
+        CancellationToken cancellationToken)
+    {
+        WebSocketMessage? message = await ReceiveMessageAsync(browserSocket, cancellationToken);
+        if (message is null || message.MessageType != WebSocketMessageType.Text)
+        {
+            return VoiceLiveAvatarRuntimeOptions.Empty;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(message.Payload);
+            JsonElement root = document.RootElement;
+            if (GetString(root, "type") != "app.voice_live_avatar.configure")
+            {
+                return VoiceLiveAvatarRuntimeOptions.Empty;
+            }
+
+            return new VoiceLiveAvatarRuntimeOptions(
+                GetString(root, "avatarCharacter"),
+                GetString(root, "avatarStyle"),
+                GetNullableDouble(root, "voiceTemperature"),
+                GetString(root, "instructions"));
+        }
+        catch (JsonException)
+        {
+            return VoiceLiveAvatarRuntimeOptions.Empty;
         }
     }
 
@@ -311,7 +354,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         await SendToolLogAsync(browserSocket, "tool.response.created", "Requested avatar response using WebIQ output.", cancellationToken);
     }
 
-    private VoiceLiveAvatarWithWebIqSettings LoadSettings()
+    private VoiceLiveAvatarWithWebIqSettings LoadSettings(VoiceLiveAvatarRuntimeOptions runtimeOptions)
     {
         string? endpoint = _configuration["Speech:Endpoint"];
         string? key = _configuration["Speech:Key"];
@@ -335,16 +378,24 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         }
 
         string selectedModel = string.IsNullOrWhiteSpace(model) ? DefaultModel : model;
+        string selectedAvatarCharacter = NormalizeAvatarCharacter(
+            FirstNonEmpty(runtimeOptions.AvatarCharacter, avatarCharacter, DefaultAvatarCharacter));
+        string selectedAvatarStyle = NormalizeAvatarStyle(
+            selectedAvatarCharacter,
+            FirstNonEmpty(runtimeOptions.AvatarStyle, avatarStyle, DefaultAvatarStyle));
+        double selectedVoiceTemperature = NormalizeVoiceTemperature(runtimeOptions.VoiceTemperature);
+        string selectedInstructions = FirstNonEmpty(runtimeOptions.Instructions, instructions, DefaultInstructions);
 
         return new VoiceLiveAvatarWithWebIqSettings(
             endpoint,
             key,
             string.IsNullOrWhiteSpace(voiceName) ? DefaultVoiceName : voiceName,
             selectedModel,
-            string.IsNullOrWhiteSpace(instructions) ? DefaultInstructions : instructions,
-            string.IsNullOrWhiteSpace(avatarCharacter) ? DefaultAvatarCharacter : avatarCharacter,
-            string.IsNullOrWhiteSpace(avatarStyle) ? DefaultAvatarStyle : avatarStyle,
+            selectedInstructions,
+            selectedAvatarCharacter,
+            selectedAvatarStyle,
             string.IsNullOrWhiteSpace(avatarBackgroundColor) ? DefaultAvatarBackgroundColor : avatarBackgroundColor,
+            selectedVoiceTemperature,
             BuildServiceUri(endpoint, selectedModel));
     }
 
@@ -366,6 +417,39 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         return builder.Uri;
     }
 
+    private static string NormalizeAvatarCharacter(string value)
+    {
+        string normalized = value.Trim().ToLowerInvariant();
+        return SupportedAvatarStyles.ContainsKey(normalized)
+            ? normalized
+            : DefaultAvatarCharacter;
+    }
+
+    private static string NormalizeAvatarStyle(string avatarCharacter, string value)
+    {
+        string normalized = value.Trim().ToLowerInvariant();
+        string[] supportedStyles = SupportedAvatarStyles[avatarCharacter];
+        if (supportedStyles.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            return normalized;
+        }
+
+        return avatarCharacter.Equals(DefaultAvatarCharacter, StringComparison.OrdinalIgnoreCase) &&
+               supportedStyles.Contains(DefaultAvatarStyle, StringComparer.OrdinalIgnoreCase)
+            ? DefaultAvatarStyle
+            : supportedStyles[0];
+    }
+
+    private static double NormalizeVoiceTemperature(double? value)
+    {
+        return Math.Clamp(value ?? DefaultVoiceTemperature, MinVoiceTemperature, MaxVoiceTemperature);
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+    }
+
     private static string BuildSessionUpdate(VoiceLiveAvatarWithWebIqSettings settings)
     {
         var session = new Dictionary<string, object?>
@@ -376,7 +460,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
             {
                 ["name"] = settings.VoiceName,
                 ["type"] = "azure-standard",
-                ["temperature"] = 0.8
+                ["temperature"] = settings.VoiceTemperature
             },
             ["input_audio_format"] = "pcm16",
             ["output_audio_format"] = "pcm16",
@@ -626,6 +710,15 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
             : null;
     }
 
+    private static double? GetNullableDouble(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out JsonElement value) &&
+               value.ValueKind == JsonValueKind.Number &&
+               value.TryGetDouble(out double result)
+            ? result
+            : null;
+    }
+
     private static async Task<WebSocketMessage?> ReceiveMessageAsync(WebSocket socket, CancellationToken cancellationToken)
     {
         byte[] buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
@@ -725,7 +818,17 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         string AvatarCharacter,
         string AvatarStyle,
         string AvatarBackgroundColor,
+        double VoiceTemperature,
         Uri ServiceUri);
+
+    private sealed record VoiceLiveAvatarRuntimeOptions(
+        string? AvatarCharacter,
+        string? AvatarStyle,
+        double? VoiceTemperature,
+        string? Instructions)
+    {
+        public static VoiceLiveAvatarRuntimeOptions Empty { get; } = new(null, null, null, null);
+    }
 
     private sealed class FunctionCallState
     {

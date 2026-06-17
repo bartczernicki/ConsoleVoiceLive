@@ -8,6 +8,7 @@ builder.Configuration.AddJsonFile("secrets.appsettings.json", optional: false, r
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddScoped<SpeechSynthesisService>();
+builder.Services.AddScoped<VoiceLiveSignalingProxy>();
 
 var app = builder.Build();
 
@@ -21,9 +22,15 @@ if (!app.Environment.IsDevelopment())
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
 
+app.UseWebSockets();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
+app.Map("/voice-live/signaling", async (HttpContext context, VoiceLiveSignalingProxy proxy) =>
+{
+    await proxy.HandleAsync(context);
+});
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 

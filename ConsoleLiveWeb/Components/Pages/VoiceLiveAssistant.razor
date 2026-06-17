@@ -1,0 +1,190 @@
+@page "/voice-live"
+@rendermode InteractiveServer
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<PageTitle>VoiceLiveAssistant</PageTitle>
+
+<h1>VoiceLiveAssistant</h1>
+
+<div class="voice-live-panel">
+    <div class="voice-live-status">
+        <span class="voice-live-status-dot @(IsRunning ? "is-running" : null)" aria-hidden="true"></span>
+        <span>@StatusMessage</span>
+    </div>
+
+    <div class="voice-live-actions">
+        <button class="btn btn-primary" @onclick="StartAsync" disabled="@(IsStarting || IsRunning)">
+            @(IsStarting ? "Starting..." : "Start")
+        </button>
+        <button class="btn btn-outline-secondary" @onclick="StopAsync" disabled="@(!IsStarting && !IsRunning)">
+            Stop
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+    }
+
+    <audio @ref="RemoteAudio" class="voice-live-audio" autoplay></audio>
+
+    <section class="voice-live-log" aria-live="polite" aria-label="Voice Live events">
+        @if (Events.Count == 0)
+        {
+            <p class="voice-live-empty">Start a session and speak into your microphone.</p>
+        }
+        else
+        {
+            @foreach (VoiceLiveEvent item in Events)
+            {
+                <div class="voice-live-event">
+                    <span class="voice-live-event-type">@item.Type</span>
+                    @if (!string.IsNullOrWhiteSpace(item.Message))
+                    {
+                        <span>@item.Message</span>
+                    }
+                </div>
+            }
+        }
+    </section>
+</div>
+
+@code {
+    private const int MaxEvents = 40;
+
+    private IJSObjectReference? Module;
+    private DotNetObjectReference<VoiceLiveAssistant>? ComponentReference;
+    private ElementReference RemoteAudio;
+
+    private bool IsStarting { get; set; }
+    private bool IsRunning { get; set; }
+    private string StatusMessage { get; set; } = "Idle";
+    private string? ErrorMessage { get; set; }
+    private List<VoiceLiveEvent> Events { get; } = [];
+
+    private async Task StartAsync()
+    {
+        ErrorMessage = null;
+        Events.Clear();
+        IsStarting = true;
+        StatusMessage = "Preparing microphone...";
+
+        try
+        {
+            Module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/voiceLiveAssistant.js");
+            ComponentReference ??= DotNetObjectReference.Create(this);
+
+            await Module.InvokeVoidAsync("start", ComponentReference, RemoteAudio);
+        }
+        catch (JSException ex)
+        {
+            ErrorMessage = ex.Message;
+            IsRunning = false;
+            IsStarting = false;
+            StatusMessage = "Unable to start.";
+            AddEvent("error", ex.Message);
+        }
+    }
+
+    private async Task StopAsync()
+    {
+        if (Module is not null)
+        {
+            await Module.InvokeVoidAsync("stop");
+        }
+
+        MarkStopped("Stopped.");
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveStarted()
+    {
+        IsStarting = false;
+        IsRunning = true;
+        StatusMessage = "Connected. Start speaking.";
+        AddEvent("connected", "Voice Live is listening.");
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveStatus(string message)
+    {
+        StatusMessage = message;
+        AddEvent("status", message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveEvent(string type, string? message)
+    {
+        AddEvent(type, message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveError(string message)
+    {
+        ErrorMessage = message;
+        IsStarting = false;
+        IsRunning = false;
+        StatusMessage = "Error.";
+        AddEvent("error", message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnVoiceLiveStopped(string message)
+    {
+        MarkStopped(message);
+        StateHasChanged();
+
+        return Task.CompletedTask;
+    }
+
+    private void MarkStopped(string message)
+    {
+        IsStarting = false;
+        IsRunning = false;
+        StatusMessage = message;
+        AddEvent("stopped", message);
+    }
+
+    private void AddEvent(string type, string? message)
+    {
+        Events.Insert(0, new VoiceLiveEvent(type, message));
+
+        if (Events.Count > MaxEvents)
+        {
+            Events.RemoveRange(MaxEvents, Events.Count - MaxEvents);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Module is not null)
+        {
+            try
+            {
+                await Module.InvokeVoidAsync("stop");
+                await Module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // The SignalR circuit is already gone.
+            }
+        }
+
+        ComponentReference?.Dispose();
+    }
+
+    private sealed record VoiceLiveEvent(string Type, string? Message);
+}

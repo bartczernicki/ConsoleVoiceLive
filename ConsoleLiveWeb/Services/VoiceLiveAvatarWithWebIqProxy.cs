@@ -365,6 +365,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         string? avatarCharacter = _configuration["Speech:AvatarCharacter"];
         string? avatarStyle = _configuration["Speech:AvatarStyle"];
         string? avatarBackgroundColor = _configuration["Speech:AvatarBackgroundColor"];
+        string? avatarBackgroundImageUrl = _configuration["Speech:AvatarBackgroundImageUrl"];
 
         if (string.IsNullOrWhiteSpace(endpoint) || endpoint == PlaceholderEndpoint)
         {
@@ -397,6 +398,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
             selectedAvatarCharacter,
             selectedAvatarStyle,
             string.IsNullOrWhiteSpace(avatarBackgroundColor) ? DefaultAvatarBackgroundColor : avatarBackgroundColor,
+            NormalizeAvatarBackgroundImageUrl(avatarBackgroundImageUrl),
             selectedVoiceTemperature,
             BuildServiceUri(endpoint, selectedModel));
     }
@@ -447,9 +449,39 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         return Math.Clamp(value ?? DefaultVoiceTemperature, MinVoiceTemperature, MaxVoiceTemperature);
     }
 
+    private static string? NormalizeAvatarBackgroundImageUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        string trimmed = value.Trim();
+        return Uri.TryCreate(trimmed, UriKind.Absolute, out Uri? uri) &&
+               uri.Scheme is "http" or "https"
+            ? trimmed
+            : null;
+    }
+
     private static string FirstNonEmpty(params string?[] values)
     {
         return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
+    }
+
+    private static Dictionary<string, object?> BuildAvatarVideoBackground(VoiceLiveAvatarWithWebIqSettings settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings.AvatarBackgroundImageUrl))
+        {
+            return new Dictionary<string, object?>
+            {
+                ["image_url"] = settings.AvatarBackgroundImageUrl
+            };
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["color"] = settings.AvatarBackgroundColor
+        };
     }
 
     private static string BuildSessionUpdate(VoiceLiveAvatarWithWebIqSettings settings)
@@ -503,10 +535,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
                         ["width"] = 1920,
                         ["height"] = 1080
                     },
-                    ["background"] = new Dictionary<string, object?>
-                    {
-                        ["color"] = settings.AvatarBackgroundColor
-                    }
+                    ["background"] = BuildAvatarVideoBackground(settings)
                 }
             },
             ["tools"] = new object[] { BuildWebIqFunctionTool() },
@@ -820,6 +849,7 @@ public sealed class VoiceLiveAvatarWithWebIqProxy
         string AvatarCharacter,
         string AvatarStyle,
         string AvatarBackgroundColor,
+        string? AvatarBackgroundImageUrl,
         double VoiceTemperature,
         Uri ServiceUri);
 

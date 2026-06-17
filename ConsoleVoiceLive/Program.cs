@@ -6,6 +6,8 @@ namespace ConsoleVoiceLive;
 internal class Program
 {
     private const string DefaultVoiceName = "en-US-Ava:DragonHDLatestNeural";
+    private const string DefaultModel = "gpt-realtime";
+    private const string DefaultInstructions = "You are a helpful AI assistant. Respond naturally and conversationally. Keep your responses concise but engaging.";
     private const string PlaceholderEndpoint = "https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com";
     private const string PlaceholderKey = "YOUR_SPEECH_KEY";
 
@@ -71,12 +73,15 @@ internal class Program
     {
         IConfiguration configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
             .AddJsonFile("secrets.appsettings.json", optional: false, reloadOnChange: false)
             .Build();
 
         string? endpoint = configuration["Speech:Endpoint"];
         string? key = configuration["Speech:Key"];
         string? voiceName = configuration["Speech:VoiceName"];
+        string? model = configuration["Speech:Model"];
+        string? instructions = configuration["Speech:Instructions"];
 
         if (string.IsNullOrWhiteSpace(endpoint) || endpoint == PlaceholderEndpoint)
         {
@@ -93,7 +98,9 @@ internal class Program
         return new SpeechSettings(
             endpoint,
             key,
-            string.IsNullOrWhiteSpace(voiceName) ? DefaultVoiceName : voiceName);
+            string.IsNullOrWhiteSpace(voiceName) ? DefaultVoiceName : voiceName,
+            string.IsNullOrWhiteSpace(model) ? DefaultModel : model,
+            string.IsNullOrWhiteSpace(instructions) ? DefaultInstructions : instructions);
     }
 
     private static SpeechSynthesizer CreateSpeechSynthesizer(SpeechSettings settings)
@@ -110,6 +117,8 @@ internal class Program
         Console.WriteLine($"  Endpoint: {settings.Endpoint}");
         Console.WriteLine($"  Key: {MaskSecret(settings.Key)}");
         Console.WriteLine($"  Voice: {settings.VoiceName}");
+        Console.WriteLine($"  Model: {settings.Model}");
+        Console.WriteLine($"  Instructions: {settings.Instructions}");
         Console.WriteLine();
     }
 
@@ -152,5 +161,10 @@ internal class Program
         }
     }
 
-    private sealed record SpeechSettings(string Endpoint, string Key, string VoiceName);
+    private sealed record SpeechSettings(
+        string Endpoint,
+        string Key,
+        string VoiceName,
+        string Model,
+        string Instructions);
 }

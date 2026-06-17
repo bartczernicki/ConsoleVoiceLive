@@ -13,6 +13,7 @@ builder.Services.AddScoped<WebIqMcpToolService>();
 builder.Services.AddScoped<AgentQuestionService>();
 builder.Services.AddScoped<VoiceLiveSignalingProxy>();
 builder.Services.AddScoped<VoiceLiveAvatarProxy>();
+builder.Services.AddScoped<VoiceLiveAvatarWithWebIqProxy>();
 builder.Services.AddSingleton<TextToVideoAvatarService>();
 
 var app = builder.Build();
@@ -36,6 +37,10 @@ app.Map("/voice-live/signaling", async (HttpContext context, VoiceLiveSignalingP
     await proxy.HandleAsync(context);
 });
 app.Map("/voice-live-avatar/session", async (HttpContext context, VoiceLiveAvatarProxy proxy) =>
+{
+    await proxy.HandleAsync(context);
+});
+app.Map("/voice-live-avatar-with-webiq/session", async (HttpContext context, VoiceLiveAvatarWithWebIqProxy proxy) =>
 {
     await proxy.HandleAsync(context);
 });

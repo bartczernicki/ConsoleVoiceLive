@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace ConsoleLiveWeb.Services;
 
@@ -9,6 +10,8 @@ public sealed class WebIqMcpToolService
     private const string DefaultEndpoint = "https://api.microsoft.ai/v3/mcp/";
     private const string ApiKeyHeaderName = "x-apikey";
     private const string PlaceholderApiKey = "=";
+    private const int MaxRawSummaryLength = 4000;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] QueryParameterNames =
     [
         "query",
@@ -34,6 +37,43 @@ public sealed class WebIqMcpToolService
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
         _loggerFactory = loggerFactory;
+    }
+
+    public async Task<WebIqLookupResponse> LookupAsync(
+        string query,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return WebIqLookupResponse.Failure("Provide a WebIQ query.");
+        }
+
+        try
+        {
+            await using WebIqMcpToolContext context =
+                await CreateWebToolContextAsync(cancellationToken).ConfigureAwait(false);
+            var arguments = new Dictionary<string, object?>
+            {
+                [context.QueryParameterName] = query.Trim()
+            };
+
+            CallToolResult result = await context.Client
+                .CallToolAsync(context.ToolName, arguments, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+
+            WebIqLookupResponse normalized = NormalizeToolResult(query, result);
+            return result.IsError == true
+                ? WebIqLookupResponse.Failure(normalized.RawSummary)
+                : normalized;
+        }
+        catch (WebIqMcpException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new WebIqMcpException($"WebIQ lookup failed: {ex.Message}", ex);
+        }
     }
 
     public async Task<WebIqMcpToolContext> CreateWebToolContextAsync(
@@ -69,8 +109,11 @@ public sealed class WebIqMcpToolService
             McpClientTool? webTool = tools.FirstOrDefault(tool =>
                 tool.Name.Equals("web", StringComparison.OrdinalIgnoreCase) &&
                 CanCallWithQuery(tool.JsonSchema));
+            string? queryParameterName = webTool is null
+                ? null
+                : GetQueryParameterName(webTool.JsonSchema);
 
-            if (webTool is null)
+            if (webTool is null || string.IsNullOrWhiteSpace(queryParameterName))
             {
                 throw new WebIqMcpException(
                     "WebIQ MCP connected, but the query-based web tool was not found.");
@@ -81,7 +124,8 @@ public sealed class WebIqMcpToolService
                 transport,
                 client,
                 [webTool],
-                webTool.Name);
+                webTool.Name,
+                queryParameterName);
         }
         catch (Exception ex)
         {
@@ -124,6 +168,165 @@ public sealed class WebIqMcpToolService
         }
 
         return sanitized.Trim();
+    }
+
+    private static WebIqLookupResponse NormalizeToolResult(string query, CallToolResult result)
+    {
+        string contentText = ExtractContentText(result);
+        string structuredJson = result.StructuredContent is null
+            ? string.Empty
+            : JsonSerializer.Serialize(result.StructuredContent, JsonOptions) ?? string.Empty;
+        string rawSummary = FirstNonEmpty(structuredJson, contentText, "WebIQ returned no content.");
+        string answer = ExtractAnswer(structuredJson)
+            ?? ExtractAnswer(contentText)
+            ?? contentText
+            ?? rawSummary;
+        IReadOnlyList<WebIqLookupSource> sources =
+            ExtractSources(structuredJson).Concat(ExtractSources(contentText))
+                .GroupBy(source => source.Url, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .Take(8)
+                .ToArray();
+
+        return WebIqLookupResponse.Success(
+            string.IsNullOrWhiteSpace(answer) ? $"WebIQ returned information for: {query}" : answer.Trim(),
+            sources,
+            Truncate(rawSummary, MaxRawSummaryLength));
+    }
+
+    private static string ExtractContentText(CallToolResult result)
+    {
+        string text = string.Join(
+            "\n",
+            result.Content.OfType<TextContentBlock>()
+                .Select(block => block.Text)
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+
+        return string.IsNullOrWhiteSpace(text)
+            ? JsonSerializer.Serialize(result.Content, JsonOptions) ?? string.Empty
+            : text;
+    }
+
+    private static string? ExtractAnswer(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (!TryParseJson(value, out JsonDocument? document))
+        {
+            return value.Trim();
+        }
+
+        using (document)
+        {
+            return FindFirstString(
+                document!.RootElement,
+                ["answer", "summary", "snippet", "description", "text", "content", "result"]);
+        }
+    }
+
+    private static IReadOnlyList<WebIqLookupSource> ExtractSources(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || !TryParseJson(value, out JsonDocument? document))
+        {
+            return [];
+        }
+
+        using (document)
+        {
+            var sources = new List<WebIqLookupSource>();
+            CollectSources(document!.RootElement, sources);
+            return sources;
+        }
+    }
+
+    private static void CollectSources(JsonElement element, List<WebIqLookupSource> sources)
+    {
+        if (sources.Count >= 8)
+        {
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            string? url = FindFirstString(element, ["url", "uri", "link", "sourceUrl", "source_url"]);
+            if (!string.IsNullOrWhiteSpace(url) &&
+                Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
+                uri.Scheme is "http" or "https")
+            {
+                sources.Add(new WebIqLookupSource(
+                    FindFirstString(element, ["title", "name", "source", "site"]),
+                    uri.ToString()));
+            }
+
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                CollectSources(property.Value, sources);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in element.EnumerateArray())
+            {
+                CollectSources(item, sources);
+            }
+        }
+    }
+
+    private static string? FindFirstString(JsonElement element, IReadOnlyCollection<string> propertyNames)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (propertyNames.Contains(property.Name) &&
+                property.Value.ValueKind == JsonValueKind.String)
+            {
+                string? value = property.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim();
+                }
+            }
+        }
+
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            string? nested = property.Value.ValueKind switch
+            {
+                JsonValueKind.Object => FindFirstString(property.Value, propertyNames),
+                JsonValueKind.Array => property.Value.EnumerateArray()
+                    .Select(item => item.ValueKind == JsonValueKind.Object ? FindFirstString(item, propertyNames) : null)
+                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)),
+                _ => null
+            };
+
+            if (!string.IsNullOrWhiteSpace(nested))
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseJson(string value, out JsonDocument? document)
+    {
+        try
+        {
+            document = JsonDocument.Parse(value);
+            return true;
+        }
+        catch (JsonException)
+        {
+            document = null;
+            return false;
+        }
     }
 
     private WebIqMcpSettings LoadSettings()
@@ -169,22 +372,69 @@ public sealed class WebIqMcpToolService
 
     private static bool CanCallWithQuery(JsonElement schema)
     {
+        return !string.IsNullOrWhiteSpace(GetQueryParameterName(schema));
+    }
+
+    private static string? GetQueryParameterName(JsonElement schema)
+    {
         if (schema.ValueKind != JsonValueKind.Object ||
             !schema.TryGetProperty("properties", out JsonElement properties) ||
             properties.ValueKind != JsonValueKind.Object)
         {
-            return false;
+            return null;
         }
 
-        return QueryParameterNames.Any(queryParameterName =>
-            properties.EnumerateObject().Any(property =>
-                property.Name.Equals(queryParameterName, StringComparison.OrdinalIgnoreCase)));
+        foreach (string queryParameterName in QueryParameterNames)
+        {
+            foreach (JsonProperty property in properties.EnumerateObject())
+            {
+                if (property.Name.Equals(queryParameterName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Name;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)) ?? string.Empty;
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength];
     }
 
     private sealed record WebIqMcpSettings(
         Uri Endpoint,
         IDictionary<string, string> Headers,
         TimeSpan ConnectionTimeout);
+}
+
+public sealed record WebIqLookupSource(string? Title, string Url);
+
+public sealed record WebIqLookupResponse(
+    bool Succeeded,
+    string Answer,
+    IReadOnlyList<WebIqLookupSource> Sources,
+    string RawSummary,
+    string? ErrorMessage)
+{
+    public static WebIqLookupResponse Success(
+        string answer,
+        IReadOnlyList<WebIqLookupSource> sources,
+        string rawSummary)
+    {
+        return new WebIqLookupResponse(true, answer, sources, rawSummary, null);
+    }
+
+    public static WebIqLookupResponse Failure(string errorMessage)
+    {
+        return new WebIqLookupResponse(false, string.Empty, [], errorMessage, errorMessage);
+    }
 }
 
 public sealed class WebIqMcpException : Exception
@@ -204,29 +454,34 @@ public sealed class WebIqMcpToolContext : IAsyncDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly HttpClientTransport _transport;
-    private readonly McpClient _client;
 
     public WebIqMcpToolContext(
         HttpClient httpClient,
         HttpClientTransport transport,
         McpClient client,
         IReadOnlyList<AITool> tools,
-        string toolName)
+        string toolName,
+        string queryParameterName)
     {
         _httpClient = httpClient;
         _transport = transport;
-        _client = client;
+        Client = client;
         Tools = tools;
         ToolName = toolName;
+        QueryParameterName = queryParameterName;
     }
+
+    public McpClient Client { get; }
 
     public IReadOnlyList<AITool> Tools { get; }
 
     public string ToolName { get; }
 
+    public string QueryParameterName { get; }
+
     public async ValueTask DisposeAsync()
     {
-        await _client.DisposeAsync().ConfigureAwait(false);
+        await Client.DisposeAsync().ConfigureAwait(false);
         await _transport.DisposeAsync().ConfigureAwait(false);
         _httpClient.Dispose();
     }

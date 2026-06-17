@@ -1,6 +1,6 @@
 let currentSession = null;
 
-export async function start(dotNetReference, videoElement, audioElement) {
+export async function start(dotNetReference, videoElement, audioElement, sessionPath = '/voice-live-avatar/session') {
     if (currentSession) {
         await notifyStatus(currentSession, 'Voice Live Avatar is already running.');
         return;
@@ -17,7 +17,8 @@ export async function start(dotNetReference, videoElement, audioElement) {
         avatarConnecting: false,
         localStream: null,
         peerConnection: null,
-        websocket: null
+        websocket: null,
+        sessionPath
     };
 
     currentSession = session;
@@ -33,7 +34,7 @@ export async function start(dotNetReference, videoElement, audioElement) {
         });
 
         await notifyStatus(session, 'Opening Voice Live Avatar session...');
-        session.websocket = new WebSocket(getSessionUrl());
+        session.websocket = new WebSocket(getSessionUrl(session.sessionPath));
         wireWebSocket(session);
         await waitForSocketOpen(session.websocket);
     } catch (error) {
@@ -82,9 +83,9 @@ function cleanupSession(session) {
     }
 }
 
-function getSessionUrl() {
+function getSessionUrl(sessionPath) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/voice-live-avatar/session`;
+    return `${protocol}//${window.location.host}${sessionPath}`;
 }
 
 function wireWebSocket(session) {
@@ -122,6 +123,28 @@ async function handleServerMessage(session, message) {
         case 'proxy.connected':
         case 'proxy.status':
             await notifyStatus(session, summary || message.message || type);
+            break;
+        case 'tool.session.update.sent':
+            await notifyStatus(session, 'WebIQ function configured for avatar session.');
+            break;
+        case 'tool.requested':
+            await notifyStatus(session, summary || 'Voice Live requested WebIQ.');
+            break;
+        case 'tool.arguments':
+            await notifyStatus(session, summary ? `WebIQ query: ${summary}` : 'WebIQ query received.');
+            break;
+        case 'tool.webiq.started':
+            await notifyStatus(session, summary || 'Looking up WebIQ.');
+            break;
+        case 'tool.webiq.completed':
+            await notifyStatus(session, 'WebIQ returned real-time context.');
+            break;
+        case 'tool.webiq.failed':
+            await notifyStatus(session, summary || 'WebIQ lookup failed.');
+            break;
+        case 'tool.output.sent':
+        case 'tool.response.created':
+            await notifyStatus(session, summary || type);
             break;
         case 'proxy.error':
         case 'error':
@@ -418,8 +441,18 @@ function getMessageSummary(message) {
         return truncate(message.delta);
     }
 
+    const details = [];
+    const item = message.item || {};
+
+    appendDetail(details, 'name', message.name || item.name);
+    appendDetail(details, 'call_id', message.call_id || item.call_id);
+
+    if (typeof message.arguments === 'string') {
+        appendDetail(details, 'arguments', message.arguments);
+    }
+
     if (typeof message.transcript === 'string') {
-        return truncate(message.transcript);
+        appendDetail(details, 'transcript', message.transcript);
     }
 
     if (message.item?.content?.length) {
@@ -428,19 +461,31 @@ function getMessageSummary(message) {
             .filter(Boolean);
 
         if (transcripts.length) {
-            return truncate(transcripts.join(' '));
+            appendDetail(details, 'content', transcripts.join(' '));
         }
     }
 
-    if (message.response?.status) {
-        return message.response.status;
-    }
+    appendDetail(details, 'status', message.response?.status);
+    appendDetail(details, 'session', message.session?.id);
 
-    if (message.session?.id) {
-        return message.session.id;
+    if (details.length > 0) {
+        return truncate(details.join(' | '));
     }
 
     return '';
+}
+
+function appendDetail(details, label, value) {
+    if (value === null || value === undefined) {
+        return;
+    }
+
+    const text = typeof value === 'string' ? value : String(value);
+    if (!text.trim()) {
+        return;
+    }
+
+    details.push(`${label}=${truncate(text.trim())}`);
 }
 
 function truncate(value) {

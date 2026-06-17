@@ -20,6 +20,14 @@ a, .btn-link {
     padding-top: 1.1rem;
 }
 
+.page-description {
+    max-width: 920px;
+    color: #495057;
+    font-size: 1rem;
+    line-height: 1.45;
+    margin: -0.25rem 0 1.25rem;
+}
+
 .tts-panel {
     max-width: 920px;
 }

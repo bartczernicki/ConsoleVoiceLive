@@ -1,0 +1,316 @@
+@page "/agent-text-to-speech"
+@rendermode InteractiveServer
+@using ConsoleLiveWeb.Services
+@inject AgentQuestionService AgentQuestion
+@inject SpeechSynthesisService SpeechSynthesis
+
+<PageTitle>Agent Text to Speech</PageTitle>
+
+<h1>Agent Text to Speech</h1>
+
+<div class="agent-tts-panel">
+    <label class="form-label" for="agent-question">Question</label>
+    <textarea id="agent-question"
+              class="form-control"
+              rows="5"
+              @bind="Question"
+              @bind:event="oninput"
+              disabled="@IsBusy"
+              placeholder="Ask the agent a question."></textarea>
+
+    <div class="tts-controls">
+        <div class="tts-control tts-control-wide">
+            <label class="form-label" for="agent-tts-voice">Voice</label>
+            <select id="agent-tts-voice"
+                    class="form-select"
+                    value="@SelectedVoiceName"
+                    @onchange="OnVoiceChanged"
+                    disabled="@(IsBusy || IsLoadingVoices)">
+                @foreach (SpeechVoiceOption voice in VoiceOptions)
+                {
+                    <option value="@voice.Name">@GetVoiceLabel(voice)</option>
+                }
+            </select>
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="agent-tts-output-format">Output</label>
+            <select id="agent-tts-output-format"
+                    class="form-select"
+                    @bind="SelectedOutputFormat"
+                    disabled="@IsBusy">
+                @foreach (SpeechOutputFormatOption format in OutputFormats)
+                {
+                    <option value="@format.Value">@format.Label</option>
+                }
+            </select>
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="agent-tts-rate">Rate <span>@FormatPercent(RatePercent)</span></label>
+            <input id="agent-tts-rate"
+                   class="form-range"
+                   type="range"
+                   min="-50"
+                   max="100"
+                   step="5"
+                   @bind="RatePercent"
+                   @bind:event="oninput"
+                   disabled="@IsBusy" />
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="agent-tts-pitch">Pitch <span>@FormatPercent(PitchPercent)</span></label>
+            <input id="agent-tts-pitch"
+                   class="form-range"
+                   type="range"
+                   min="-50"
+                   max="50"
+                   step="5"
+                   @bind="PitchPercent"
+                   @bind:event="oninput"
+                   disabled="@IsBusy" />
+        </div>
+
+        <div class="tts-control">
+            <label class="form-label" for="agent-tts-volume">Volume <span>@Volume</span></label>
+            <input id="agent-tts-volume"
+                   class="form-range"
+                   type="range"
+                   min="0"
+                   max="100"
+                   step="5"
+                   @bind="Volume"
+                   @bind:event="oninput"
+                   disabled="@IsBusy" />
+        </div>
+    </div>
+
+    <div class="tts-actions">
+        <button class="btn btn-primary" @onclick="AskAndReadAsync" disabled="@IsBusy">
+            @ActionButtonText
+        </button>
+        <button class="btn btn-outline-secondary" @onclick="ResetDefaults" disabled="@IsBusy">
+            Reset defaults
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(VoiceNotice))
+    {
+        <div class="alert alert-warning" role="status">@VoiceNotice</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="alert alert-danger" role="alert">@ErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(AgentAnswer))
+    {
+        <section class="agent-tts-answer" aria-live="polite">
+            <h2>Agent Response</h2>
+            <p>@AgentAnswer</p>
+        </section>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(SpeechWarning))
+    {
+        <div class="alert alert-warning" role="status">@SpeechWarning</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(AudioSource))
+    {
+        <audio @key="AudioSource" class="tts-audio" controls autoplay src="@AudioSource"></audio>
+    }
+</div>
+
+@code {
+    private SpeechSynthesisDefaults Defaults = null!;
+    private IReadOnlyList<SpeechOutputFormatOption> OutputFormats = [];
+    private List<SpeechVoiceOption> VoiceOptions { get; } = [];
+
+    private string Question { get; set; } = "What is Azure OpenAI?";
+    private string SelectedVoiceName { get; set; } = string.Empty;
+    private string SelectedLocale { get; set; } = string.Empty;
+    private string SelectedOutputFormat { get; set; } = string.Empty;
+    private int RatePercent { get; set; }
+    private int PitchPercent { get; set; }
+    private int Volume { get; set; }
+
+    private bool IsLoadingVoices { get; set; }
+    private bool IsAskingAgent { get; set; }
+    private bool IsSynthesizing { get; set; }
+    private string? VoiceNotice { get; set; }
+    private string? ErrorMessage { get; set; }
+    private string? SpeechWarning { get; set; }
+    private string? AgentAnswer { get; set; }
+    private string? AudioSource { get; set; }
+
+    private bool IsBusy => IsAskingAgent || IsSynthesizing;
+
+    private string ActionButtonText => IsAskingAgent
+        ? "Asking..."
+        : IsSynthesizing
+            ? "Reading..."
+            : "Ask and read aloud";
+
+    protected override void OnInitialized()
+    {
+        Defaults = SpeechSynthesis.GetDefaults();
+        OutputFormats = SpeechSynthesis.GetOutputFormats();
+        ResetDefaults();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        await LoadVoicesAsync();
+    }
+
+    private async Task LoadVoicesAsync()
+    {
+        IsLoadingVoices = true;
+        VoiceNotice = null;
+        StateHasChanged();
+
+        SpeechVoiceListResponse response = await SpeechSynthesis.GetVoicesAsync();
+
+        if (response.Succeeded)
+        {
+            VoiceOptions.Clear();
+            VoiceOptions.AddRange(response.Voices);
+            EnsureSelectedVoiceOption();
+            SelectedLocale = FindSelectedVoice()?.Locale ?? SelectedLocale;
+        }
+        else
+        {
+            VoiceNotice = response.ErrorMessage;
+        }
+
+        IsLoadingVoices = false;
+        StateHasChanged();
+    }
+
+    private async Task AskAndReadAsync()
+    {
+        ErrorMessage = null;
+        SpeechWarning = null;
+        AgentAnswer = null;
+        AudioSource = null;
+
+        if (string.IsNullOrWhiteSpace(Question))
+        {
+            ErrorMessage = "Enter a question for the agent.";
+            return;
+        }
+
+        IsAskingAgent = true;
+
+        try
+        {
+            AgentQuestionResponse agentResponse = await AgentQuestion.AskAsync(Question);
+
+            if (!agentResponse.Succeeded || string.IsNullOrWhiteSpace(agentResponse.Answer))
+            {
+                ErrorMessage = agentResponse.ErrorMessage ?? "The agent request failed.";
+                return;
+            }
+
+            AgentAnswer = agentResponse.Answer;
+        }
+        finally
+        {
+            IsAskingAgent = false;
+        }
+
+        IsSynthesizing = true;
+
+        try
+        {
+            var request = new SpeechSynthesisRequest(
+                AgentAnswer,
+                SelectedVoiceName,
+                SelectedLocale,
+                SelectedOutputFormat,
+                RatePercent,
+                PitchPercent,
+                Volume);
+            SpeechSynthesisResponse response = await SpeechSynthesis.SynthesizeAsync(request);
+
+            if (!response.Succeeded || response.AudioData is null)
+            {
+                SpeechWarning = response.ErrorMessage ?? "The agent answered, but speech synthesis failed.";
+                return;
+            }
+
+            string base64Audio = Convert.ToBase64String(response.AudioData);
+            AudioSource = $"data:audio/mpeg;base64,{base64Audio}";
+        }
+        finally
+        {
+            IsSynthesizing = false;
+        }
+    }
+
+    private void ResetDefaults()
+    {
+        SelectedVoiceName = Defaults.VoiceName;
+        SelectedLocale = Defaults.Locale;
+        SelectedOutputFormat = Defaults.OutputFormat;
+        RatePercent = Defaults.RatePercent;
+        PitchPercent = Defaults.PitchPercent;
+        Volume = Defaults.Volume;
+        EnsureSelectedVoiceOption();
+    }
+
+    private void OnVoiceChanged(ChangeEventArgs args)
+    {
+        SelectedVoiceName = Convert.ToString(args.Value) ?? Defaults.VoiceName;
+        SelectedLocale = FindSelectedVoice()?.Locale ?? Defaults.Locale;
+    }
+
+    private void EnsureSelectedVoiceOption()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedVoiceName))
+        {
+            SelectedVoiceName = Defaults.VoiceName;
+            SelectedLocale = Defaults.Locale;
+        }
+
+        if (VoiceOptions.Any(voice => string.Equals(voice.Name, SelectedVoiceName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        VoiceOptions.Insert(0, new SpeechVoiceOption(
+            SelectedVoiceName,
+            SelectedLocale,
+            SelectedVoiceName,
+            "Configured",
+            []));
+    }
+
+    private SpeechVoiceOption? FindSelectedVoice()
+    {
+        return VoiceOptions.FirstOrDefault(voice =>
+            string.Equals(voice.Name, SelectedVoiceName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string GetVoiceLabel(SpeechVoiceOption voice)
+    {
+        string displayName = string.Equals(voice.LocalName, voice.Name, StringComparison.OrdinalIgnoreCase)
+            ? voice.Name
+            : $"{voice.LocalName} ({voice.Name})";
+
+        return $"{displayName} - {voice.Locale} - {voice.Gender}";
+    }
+
+    private static string FormatPercent(int value)
+    {
+        return value > 0 ? $"+{value}%" : $"{value}%";
+    }
+}

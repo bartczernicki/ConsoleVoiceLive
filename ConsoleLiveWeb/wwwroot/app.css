@@ -24,6 +24,28 @@ a, .btn-link {
     max-width: 920px;
 }
 
+.agent-tts-panel {
+    max-width: 920px;
+}
+
+.agent-tts-answer {
+    border: 1px solid #d7dce2;
+    border-radius: 6px;
+    background: #fbfcfe;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+.agent-tts-answer h2 {
+    font-size: 1.05rem;
+    margin-bottom: 0.5rem;
+}
+
+.agent-tts-answer p {
+    white-space: pre-wrap;
+    margin: 0;
+}
+
 .tts-controls {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

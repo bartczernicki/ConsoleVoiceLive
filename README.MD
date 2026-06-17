@@ -11,6 +11,7 @@ Azure Speech and Voice Live samples in two .NET 10 projects:
 - An Azure AI Speech or Foundry Speech-capable resource.
 - A Speech endpoint like `https://YOUR_RESOURCE_NAME.cognitiveservices.azure.com`.
 - A Speech resource key.
+- An Azure OpenAI deployment for Agent Text to Speech.
 - macOS voice capture/playback for the console VoiceLiveAssistant uses SoX:
 
 ```zsh
@@ -64,11 +65,17 @@ Create `ConsoleLiveWeb/secrets.appsettings.json`:
     "headers": {
       "x-apikey": "YOUR_WEBIQ_MCP_API_KEY"
     }
+  },
+  "AzureOpenAI": {
+    "Endpoint": "https://YOUR_AZURE_OPENAI_RESOURCE.openai.azure.com",
+    "APIKey": "YOUR_AZURE_OPENAI_KEY",
+    "ModelDeploymentName": "YOUR_DEPLOYMENT_NAME"
   }
 }
 ```
 
 `WebIQ-MCP` is only needed for WebIQ grounded lookup features. Speech-only pages need only `Speech:Endpoint` and `Speech:Key`.
+`AzureOpenAI` is only needed for the Agent Text to Speech page.
 
 The Blazor app reads non-secret defaults from `ConsoleLiveWeb/appsettings.json`, including voice, model, instructions, TTS prosody defaults, and avatar defaults.
 
@@ -111,6 +118,7 @@ Useful routes:
 - `/voice-live`
 - `/text-to-videoavatar`
 - `/voice-live-avatar`
+- `/agent-text-to-speech`
 
 ## Troubleshooting
 
@@ -139,3 +147,9 @@ If WebIQ lookup fails, confirm:
 - `WebIQ-MCP:headers:x-apikey` is set in `ConsoleLiveWeb/secrets.appsettings.json`.
 - The WebIQ key is not the placeholder value.
 - The key is never committed or rendered in the browser.
+
+If Agent Text to Speech fails, confirm:
+
+- `AzureOpenAI:Endpoint`, `AzureOpenAI:APIKey`, and `AzureOpenAI:ModelDeploymentName` are set in `ConsoleLiveWeb/secrets.appsettings.json`.
+- The endpoint is the Azure OpenAI resource endpoint, not the Speech endpoint.
+- The deployment name points to a model that supports the Azure OpenAI Responses API.
